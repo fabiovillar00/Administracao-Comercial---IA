@@ -130,12 +130,19 @@ type SpeechRecognitionLike = {
   lang: string;
   interimResults: boolean;
   continuous: boolean;
+  maxAlternatives: number;
   onresult: (event: {
-    results: ArrayLike<{ 0: { transcript: string } }>;
+    results: ArrayLike<ArrayLike<{ transcript: string }>>;
   }) => void;
   onend: () => void;
   onerror: () => void;
   start: () => void;
+};
+type ClientOption = {
+  codigo: string;
+  nome: string;
+  documento: string;
+  groupName?: string | null;
 };
 const chartConfig = {
   value: { label: 'Faturamento', color: 'var(--chart-1)' },
@@ -162,41 +169,49 @@ const pct = (value: number) =>
   }).format(value);
 
 export default function Home() {
-  const [query, setQuery] = useState(
-    'quero o acumulado do cliente Dcarvalho no período de 2026 e o detalhamento',
-  );
-  const [answer, setAnswer] = useState('Dcarvalho');
+  const [query, setQuery] = useState('');
+  const [answer, setAnswer] = useState('');
   const [listening, setListening] = useState(false);
   const [data, setData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(true);
   const [clientFilter, setClientFilter] = useState('');
-  const [clientPreview, setClientPreview] = useState<{
-    codigo: string;
-    nome: string;
-    documento: string;
-  } | null>(null);
+  const [clientPreview, setClientPreview] = useState<ClientOption | null>(null);
+  const [clientMatches, setClientMatches] = useState<ClientOption[]>([]);
+  const [clientSearching, setClientSearching] = useState(false);
   const [groupFilter, setGroupFilter] = useState('');
-  const [startFilter, setStartFilter] = useState('');
-  const [endFilter, setEndFilter] = useState('');
+  const [startFilter, setStartFilter] = useState(
+    () => `${new Date().getFullYear()}-01-01`,
+  );
+  const [endFilter, setEndFilter] = useState(
+    () => new Date().toISOString().slice(0, 10),
+  );
   const [selectedChartCategory, setSelectedChartCategory] = useState<
     'pecas' | 'implementos' | 'servicos' | null
   >(null);
   const submit = async (
     question = query,
     filters?: { clientTerm?: string; groupName?: string; start?: string; end?: string },
+    speechAlternatives: string[] = [],
   ) => {
     if (!question.trim() && !filters?.clientTerm && !filters?.groupName) return;
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('http://localhost:8000/api/ask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, ...filters }),
-      });
-      const result = await response.json();
+      const candidates = [...new Set([question, ...speechAlternatives])];
+      let response: Response | null = null;
+      let result: ReportData & { error?: string } | null = null;
+      for (const candidate of candidates) {
+        response = await fetch('http://localhost:8000/api/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: candidate, ...filters }),
+        });
+        result = await response.json();
+        if (response.ok || response.status !== 404) break;
+      }
+      if (!response || !result) throw new Error('Não foi possível concluir a consulta.');
       if (!response.ok)
         throw new Error(
           result.error || 'Não foi possível concluir a consulta.',
@@ -211,7 +226,7 @@ export default function Home() {
           documento: result.client.documento ?? 'CNPJ não informado',
         });
         if (result.client.groupName) setGroupFilter(result.client.groupName);
-        const filterStart = filters.start ?? result.period.start;
+        const filterStart = filters.start ?? result.period?.start ?? startFilter;
         const filterEnd = filters.end ?? endFilter;
         setQuery(
           `faturamento ${result.client.groupName || result.client.nome} no período de ${formatIsoDate(filterStart)} a ${formatIsoDate(filterEnd)}`,
@@ -224,19 +239,38 @@ export default function Home() {
     }
   };
   useEffect(() => {
-    void submit(query);
-  }, []);
-  useEffect(() => {
     if (!data?.period) return;
     setStartFilter(data.period.start);
     const inclusiveEnd = new Date(`${data.period.end}T12:00:00`);
     inclusiveEnd.setDate(inclusiveEnd.getDate() - 1);
     setEndFilter(inclusiveEnd.toISOString().slice(0, 10));
   }, [data?.period?.start, data?.period?.end]);
+  useEffect(() => {
+    const term = clientFilter.trim();
+    if (clientPreview?.codigo === term || term.length < 2) {
+      setClientMatches([]);
+      return;
+    }
+    const timer = window.setTimeout(async () => {
+      setClientSearching(true);
+      try {
+        const response = await fetch(
+          `http://localhost:8000/api/clients?q=${encodeURIComponent(term)}`,
+        );
+        const result = (await response.json()) as { clients?: ClientOption[] };
+        setClientMatches((result.clients ?? []).slice(0, 10));
+      } catch {
+        setClientMatches([]);
+      } finally {
+        setClientSearching(false);
+      }
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [clientFilter, clientPreview?.codigo]);
   const applyFilters = () => {
     void submit(query, {
       clientTerm: clientFilter || undefined,
-      groupName: groupFilter || undefined,
+      groupName: clientFilter ? undefined : groupFilter || undefined,
       start: startFilter || undefined,
       end: endFilter || undefined,
     });
@@ -250,14 +284,16 @@ export default function Home() {
       const response = await fetch(
         `http://localhost:8000/api/clients?q=${encodeURIComponent(clientFilter.trim())}`,
       );
-      const result = await response.json();
-      const matches = (result.clients ?? []) as Array<{
-        codigo: string;
-        nome: string;
-        documento: string;
-      }>;
+      const result = (await response.json()) as { clients?: ClientOption[] };
+      const matches = (result.clients ?? []) as ClientOption[];
+      const normalized = clientFilter.trim().toLocaleLowerCase('pt-BR');
       const selected =
-        matches.find((item) => item.codigo === clientFilter.trim()) ?? matches[0];
+        matches.find(
+          (item) =>
+            item.codigo === clientFilter.trim() ||
+            item.documento === clientFilter.trim() ||
+            item.nome.toLocaleLowerCase('pt-BR') === normalized,
+        ) ?? null;
       setClientPreview(selected ?? null);
     } catch {
       setClientPreview(null);
@@ -278,10 +314,14 @@ export default function Home() {
     recognition.lang = 'pt-BR';
     recognition.interimResults = false;
     recognition.continuous = false;
+    recognition.maxAlternatives = 5;
     recognition.onresult = (event) => {
-      const spoken = event.results[0][0].transcript;
+      const alternatives = Array.from(event.results[0], (item) => item.transcript)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const spoken = alternatives[0] ?? '';
       setQuery(spoken);
-      void submit(spoken);
+      void submit(spoken, undefined, alternatives.slice(1));
     };
     recognition.onend = () => setListening(false);
     recognition.onerror = () => {
@@ -526,6 +566,8 @@ export default function Home() {
               </p>
             )}
           </div>
+          <>
+          {data && (
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="flex items-center gap-2 text-sm font-semibold">
@@ -599,10 +641,11 @@ export default function Home() {
               </Button>
             </div>
           </div>
+          )}
           {filtersOpen && (
             <section className="mb-4 grid gap-3 rounded-[18px] border border-[#d9dbea] bg-white p-4 shadow-[0_10px_30px_rgba(49,45,94,.06)] md:grid-cols-2 xl:grid-cols-[1.4fr_1.1fr_.75fr_.75fr_auto] xl:items-end">
-              <label className="grid gap-1.5 text-xs font-semibold text-[#56576f]">
-                Cliente
+              <div className="relative grid gap-1.5 text-xs font-semibold text-[#56576f]">
+                <span>Cliente</span>
                 <input
                   value={clientFilter}
                   onChange={(event) => {
@@ -612,8 +655,41 @@ export default function Home() {
                   }}
                   onBlur={() => void previewClient()}
                   placeholder="Código, nome ou CNPJ"
+                  autoComplete="off"
                   className="h-10 rounded-lg border border-[#d9dbea] bg-[#fafafe] px-3 text-sm font-normal outline-none transition focus:border-[#008ad0] focus:ring-2 focus:ring-[#008ad0]/15"
                 />
+                {(clientSearching || clientMatches.length > 0) && !clientPreview && (
+                  <div className="absolute left-0 right-0 top-[66px] z-30 max-h-72 overflow-y-auto rounded-xl border border-[#d9dbea] bg-white p-1.5 shadow-xl">
+                    {clientSearching && (
+                      <p className="px-3 py-2 text-[11px] font-normal text-[#71728a]">
+                        Buscando clientes…
+                      </p>
+                    )}
+                    {!clientSearching &&
+                      clientMatches.map((item) => (
+                        <button
+                          key={`${item.codigo}-${item.documento}`}
+                          type="button"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => {
+                            setClientFilter(item.codigo);
+                            setClientPreview(item);
+                            setClientMatches([]);
+                            setGroupFilter(item.groupName ?? '');
+                          }}
+                          className="w-full rounded-lg px-3 py-2 text-left transition hover:bg-[#eef7fc] focus:bg-[#eef7fc] focus:outline-none"
+                        >
+                          <strong className="block text-[11px] text-[#312d5e]">
+                            {item.codigo} — {item.nome}
+                          </strong>
+                          <span className="mt-0.5 block text-[10px] font-normal text-[#71728a]">
+                            CNPJ {item.documento || 'não informado'}
+                            {item.groupName ? ` · Grupo ${item.groupName}` : ''}
+                          </span>
+                        </button>
+                      ))}
+                  </div>
+                )}
                 {clientPreview && (
                   <span className="rounded-md bg-[#eef7fc] px-2 py-1.5 text-[11px] font-normal leading-4 text-[#31576b]">
                     <strong className="text-[#312d5e]">
@@ -622,7 +698,7 @@ export default function Home() {
                     <span className="block">CNPJ {clientPreview.documento}</span>
                   </span>
                 )}
-              </label>
+              </div>
               <label className="grid gap-1.5 text-xs font-semibold text-[#56576f]">
                 Coligada / grupo
                 <input
@@ -634,7 +710,7 @@ export default function Home() {
                       setClientPreview(null);
                     }
                   }}
-                  placeholder="Nome em K_NOMEGRUPO"
+                  placeholder="Nome da coligada"
                   className="h-10 rounded-lg border border-[#d9dbea] bg-[#fafafe] px-3 text-sm font-normal outline-none transition focus:border-[#008ad0] focus:ring-2 focus:ring-[#008ad0]/15"
                 />
               </label>
@@ -659,13 +735,19 @@ export default function Home() {
               </label>
               <Button
                 onClick={applyFilters}
-                disabled={loading}
+                disabled={
+                  loading ||
+                  Boolean(clientFilter && !clientPreview) ||
+                  (!data && !clientPreview && !groupFilter)
+                }
                 className="h-10 rounded-lg bg-[#312d5e] px-5 hover:bg-[#403b78]"
               >
                 Aplicar
               </Button>
             </section>
           )}
+          {data && (
+            <>
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Metric
               label="Faturamento bruto"
@@ -676,6 +758,7 @@ export default function Home() {
               label="Devoluções"
               value={brl(data?.totals.devolucoes ?? 0)}
               caption="deduzidas no período"
+              danger={(data?.totals.devolucoes ?? 0) > 0}
             />
             <Metric
               label="Faturamento líquido"
@@ -1164,6 +1247,9 @@ export default function Home() {
             Dados consultados em tempo real no ERP_PROD · Conexão somente
             leitura · Regras extraídas do modelo Power BI.
           </p>
+            </>
+          )}
+            </>
         </div>
       </section>
     </main>
@@ -1217,15 +1303,17 @@ function Metric({
   label,
   value,
   caption,
+  danger = false,
 }: {
   label: string;
   value: string;
   caption: string;
+  danger?: boolean;
 }) {
   return (
-    <article className="rounded-[18px] border border-[#dce4e0] bg-white p-5">
-      <p className="text-xs font-medium text-[#6d7f78]">{label}</p>
-      <p className="mt-3 text-[25px] font-semibold tracking-[-.04em]">
+    <article className={`rounded-[18px] border bg-white p-5 ${danger ? 'border-red-200' : 'border-[#dce4e0]'}`}>
+      <p className={`text-xs font-medium ${danger ? 'text-red-600' : 'text-[#6d7f78]'}`}>{label}</p>
+      <p className={`mt-3 text-[25px] font-semibold tracking-[-.04em] ${danger ? 'text-red-600' : ''}`}>
         {value}
       </p>
       <p className="mt-2 text-xs text-[#84938e]">{caption}</p>

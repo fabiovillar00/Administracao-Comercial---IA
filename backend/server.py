@@ -253,6 +253,8 @@ def period_from_question(question, year):
         selected_month = MONTHS[named_month.group(1)]
     elif numeric_month:
         selected_month = int(numeric_month.group(1))
+    elif re.search(r'\b(?:(?:este|esse|neste|nesse)\s+mes|(?:no\s+)?mes\s+atual)\b', normalized):
+        selected_month = date.today().month
     else:
         return date(year, 1, 1), date(year + 1, 1, 1)
     start = date(year, selected_month, 1)
@@ -270,9 +272,10 @@ def interpret(question):
         year = date.today().year
     month_names = r'janeiro|fevereiro|mar[cç]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro'
     relative_year = r'(?:este|neste|esse|nesse)\s+ano|(?:no\s+)?ano\s+atual|(?:no\s+)?ano\s+passado'
+    relative_month = r'(?:este|esse|neste|nesse)\s+m[eê]s|(?:no\s+)?m[eê]s\s+atual'
     single_month = rf'(?:{month_names})\s+(?:(?:de\s+)?20\d{{2}}|(?:deste|desse|neste|nesse)\s+ano|do\s+ano\s+(?:atual|passado))'
     numeric_month = r'(?:0?[1-9]|1[0-2])\s*(?:/|de)\s*20\d{2}'
-    period_boundary = rf'(?=\s+(?:(?:{relative_year})|(?:{single_month})|(?:{numeric_month})|(?:de\s+)?(?:{month_names})\s+(?:a|at[eé])\s+(?:{month_names})\s+(?:de\s+)?20\d{{2}}|(?:(?:no\s+)?per[ií]odo\s+de\s+|no\s+|em\s+|entre\s+)?20\d{{2}})\b|$)'
+    period_boundary = rf'(?=\s+(?:(?:{relative_year})|(?:{relative_month})|(?:{single_month})|(?:{numeric_month})|(?:de\s+)?(?:{month_names})\s+(?:a|at[eé])\s+(?:{month_names})\s+(?:de\s+)?20\d{{2}}|(?:(?:no\s+)?per[ií]odo\s+de\s+|no\s+|em\s+|entre\s+)?20\d{{2}})\b|$)'
     client = None
     for pattern in (
         rf'\bcliente\s+(.+?){period_boundary}',
