@@ -18,7 +18,8 @@ import {
   TrendingUp,
   Users,
 } from 'lucide-react';
-import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, LabelList, Pie, PieChart, XAxis, YAxis } from 'recharts';
+import { OpenDocumentsView, type OpenItem } from '@/components/open-documents-view';
 import { Button } from '@/components/ui/button';
 import {
   ChartContainer,
@@ -41,13 +42,25 @@ import {
 } from '@/components/ui/table';
 
 type ReportData = {
-  client: { codigo?: string; nome: string; documento?: string; groupName?: string | null; branchCount: number };
+  client: { codigo?: string; nome: string; documento?: string; groupName?: string | null; branchCount: number; ids: number[] };
   year: number;
   period?: { start: string; end: string };
   category: 'pecas' | 'implementos' | 'servicos' | null;
   understoodAs?: string | null;
   grouping?: 'cnpj' | 'grupoempresarial' | 'named_group' | 'connected_group';
   matrixCode?: number | null;
+  openOrders?: number;
+  openOrdersCount?: number;
+  openOrderItems?: OpenItem[];
+  openProposalItems?: OpenItem[];
+  openProposals?: number;
+  openProposalsCount?: number;
+  openByCategory?: Record<'pecas' | 'implementos' | 'servicos', {
+    openOrders: number;
+    openOrdersCount: number;
+    openProposals: number;
+    openProposalsCount: number;
+  }>;
   totals: Record<
     | 'faturamento'
     | 'devolucoes'
@@ -72,6 +85,18 @@ type ReportData = {
     quantidade: number;
     valorLiquido: number;
     impostos: number;
+  }>;
+  products?: Array<{
+    codigoProduto: string;
+    produto: string;
+    familia: string;
+    familiaApelido: string;
+    categoria: 'pecas' | 'implementos' | 'servicos' | 'outros';
+    quantidade: number;
+    faturamento: number;
+    documentos: number;
+    clientes: number;
+    ultimaVenda: string;
   }>;
   branches: Array<{
     id: number;
@@ -169,11 +194,13 @@ const pct = (value: number) =>
   }).format(value);
 
 export default function Home() {
+  const [activeView, setActiveView] = useState<'overview' | 'products' | 'orders' | 'proposals' | 'order-products' | 'proposal-products'>('overview');
   const [query, setQuery] = useState('');
   const [answer, setAnswer] = useState('');
   const [listening, setListening] = useState(false);
   const [data, setData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [productsLoading, setProductsLoading] = useState(false);
   const [error, setError] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(true);
   const [clientFilter, setClientFilter] = useState('');
@@ -245,6 +272,24 @@ export default function Home() {
     inclusiveEnd.setDate(inclusiveEnd.getDate() - 1);
     setEndFilter(inclusiveEnd.toISOString().slice(0, 10));
   }, [data?.period?.start, data?.period?.end]);
+  useEffect(() => {
+    if (activeView !== 'products' || !data?.period || data.products) return;
+    const params = new URLSearchParams({
+      clientId: data.client.ids.join(','),
+      start: data.period.start,
+      end: data.period.end,
+    });
+    if (data.category) params.set('category', data.category);
+    setProductsLoading(true);
+    fetch(`http://localhost:8000/api/products?${params}`)
+      .then((response) => {
+        if (!response.ok) throw new Error('Não foi possível carregar os produtos.');
+        return response.json() as Promise<{ products: ReportData['products'] }>;
+      })
+      .then((result) => setData((current) => current ? { ...current, products: result.products ?? [] } : current))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'Falha ao carregar produtos.'))
+      .finally(() => setProductsLoading(false));
+  }, [activeView, data]);
   useEffect(() => {
     const term = clientFilter.trim();
     if (clientPreview?.codigo === term || term.length < 2) {
@@ -379,6 +424,7 @@ export default function Home() {
   const chartCategoryLabel = selectedChartCategory
     ? categoryNames[selectedChartCategory]
     : 'Geral';
+  const selectedOpen = selectedChartCategory ? data?.openByCategory?.[selectedChartCategory] : data;
   const intelligenceCurrentNet = selectedChartCategory
     ? (data?.categoryTotals?.[selectedChartCategory] ?? 0)
     : (data?.totals.liquido ?? 0);
@@ -463,10 +509,26 @@ export default function Home() {
           </div>
         </div>
         <nav className="mt-9 space-y-1" aria-label="Navegação principal">
-          <NavItem icon={LayoutDashboard} label="Visão geral" active />
+          <div className="group/nav">
+          <NavItem icon={LayoutDashboard} label="Análise de Faturamento" active={activeView === 'overview'} onClick={() => setActiveView('overview')} />
+          <div className={`ml-5 border-l border-white/20 pl-3 ${activeView === 'overview' || activeView === 'products' ? 'block' : 'hidden group-hover/nav:block group-focus-within/nav:block'}`} role="group" aria-label="Análise de Faturamento">
+            <NavItem icon={PackageSearch} label="Produtos" active={activeView === 'products'} onClick={() => setActiveView('products')} />
+          </div>
+          </div>
+          <div className="group/nav">
+          <NavItem icon={FileText} label="Pedidos" active={activeView === 'orders'} onClick={() => setActiveView('orders')} />
+          <div className={`ml-5 border-l border-white/20 pl-3 ${activeView === 'orders' || activeView === 'order-products' ? 'block' : 'hidden group-hover/nav:block group-focus-within/nav:block'}`} role="group" aria-label="Pedidos">
+            <NavItem icon={PackageSearch} label="Produtos" active={activeView === 'order-products'} onClick={() => setActiveView('order-products')} />
+          </div>
+          </div>
+          <div className="group/nav">
+          <NavItem icon={FileText} label="Propostas" active={activeView === 'proposals'} onClick={() => setActiveView('proposals')} />
+          <div className={`ml-5 border-l border-white/20 pl-3 ${activeView === 'proposals' || activeView === 'proposal-products' ? 'block' : 'hidden group-hover/nav:block group-focus-within/nav:block'}`} role="group" aria-label="Propostas">
+            <NavItem icon={PackageSearch} label="Produtos" active={activeView === 'proposal-products'} onClick={() => setActiveView('proposal-products')} />
+          </div>
+          </div>
           <NavItem icon={Sparkles} label="Perguntar aos dados" />
           <NavItem icon={Users} label="Clientes" />
-          <NavItem icon={PackageSearch} label="Produtos" />
           <NavItem icon={FileText} label="Relatórios" />
         </nav>
         <div className="mt-auto rounded-2xl border border-white/10 bg-white/[.06] p-4">
@@ -484,10 +546,10 @@ export default function Home() {
         <header className="flex h-[72px] items-center justify-between border-b border-[#ddddeb] bg-white/80 px-5 backdrop-blur md:px-8">
           <div>
             <p className="text-xs font-medium uppercase tracking-[.14em] text-[#686980]">
-              Faturamento
+              {activeView.startsWith('order') ? 'Pedidos' : activeView.startsWith('proposal') ? 'Propostas' : 'Faturamento'}
             </p>
             <h1 className="text-lg font-semibold tracking-tight">
-              Visão comercial
+              {activeView === 'products' ? 'Análise de Faturamento / Produtos' : activeView.startsWith('order') ? (activeView === 'order-products' ? 'Pedidos / Produtos' : 'Pedidos em aberto') : activeView.startsWith('proposal') ? (activeView === 'proposal-products' ? 'Propostas / Produtos' : 'Propostas em aberto') : 'Análise de Faturamento'}
             </h1>
           </div>
           <div className="flex items-center gap-2">
@@ -508,7 +570,11 @@ export default function Home() {
             <div>
               <p className="mb-1 text-sm text-[#686980]">Olá, Fabio.</p>
               <h2 className="text-2xl font-semibold tracking-[-.035em] md:text-[30px]">
-                O que você quer descobrir hoje?
+                {activeView === 'products'
+                  ? data
+                    ? `Produtos comprados por ${answer}`
+                    : 'Qual cliente você quer analisar?'
+                  : 'O que você quer descobrir hoje?'}
               </h2>
             </div>
             <div className="flex items-center gap-2 text-sm text-[#62637b]">
@@ -566,7 +632,28 @@ export default function Home() {
               </p>
             )}
           </div>
-          <>
+          {(['orders', 'proposals', 'order-products', 'proposal-products'].includes(activeView)) && (
+            <OpenDocumentsView
+              key={`${activeView.startsWith('order') ? 'orders' : 'proposals'}-${data?.client.ids.join(',') ?? ''}`}
+              kind={activeView.startsWith('order') ? 'orders' : 'proposals'}
+              detail={activeView.endsWith('-products')}
+              client={data ? answer : undefined}
+              items={activeView.startsWith('order') ? data?.openOrderItems : data?.openProposalItems}
+              total={activeView.startsWith('order') ? data?.openOrders : data?.openProposals}
+              documents={activeView.startsWith('order') ? data?.openOrdersCount : data?.openProposalsCount}
+              onNavigate={(detail) => setActiveView(activeView.startsWith('order') ? (detail ? 'order-products' : 'orders') : (detail ? 'proposal-products' : 'proposals'))}
+            />
+          )}
+          {activeView === 'products' && (
+            <ProductsView
+              data={data}
+              loading={productsLoading}
+              answer={answer}
+              periodLabel={periodLabel}
+              onBack={() => setActiveView('overview')}
+            />
+          )}
+          {activeView === 'overview' && (<>
           {data && (
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -777,7 +864,7 @@ export default function Home() {
                 Composição do faturamento
               </h3>
               <p className="mt-0.5 text-[11px] text-[#71827b]">
-                Clique em uma categoria para filtrar o gráfico mensal
+                Clique em uma categoria para filtrar o gráfico, os pedidos e as propostas
               </p>
             </div>
             <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_150px] md:items-center">
@@ -973,15 +1060,17 @@ export default function Home() {
                     : 'filiais consolidadas pelo CNPJ-base.'}
                 </li>
                 <li>
-                  • Faturamento bruto: {brl(data?.totals.faturamento ?? 0)}.
+                  • Pedidos em Aberto: Qtd.: {selectedOpen?.openOrdersCount != null ? selectedOpen.openOrdersCount.toLocaleString('pt-BR') : '—'} - {selectedOpen?.openOrders != null ? brl(selectedOpen.openOrders) : '—'}
+                  <span className="mt-1 block text-xs text-[#c4c5df]">{chartCategoryLabel} · posição atual do grupo · todas as datas</span>
                 </li>
                 <li>
-                  • Devoluções identificadas:{' '}
-                  {brl(data?.totals.devolucoes ?? 0)}.
+                  • Propostas em Aberto: Qtd.: {selectedOpen?.openProposalsCount != null ? selectedOpen.openProposalsCount.toLocaleString('pt-BR') : '—'} - {selectedOpen?.openProposals != null ? brl(selectedOpen.openProposals) : '—'}
+                  <span className="mt-1 block text-xs text-[#c4c5df]">{chartCategoryLabel} · posição atual do grupo · todas as datas</span>
                 </li>
               </ul>
               <Button
                 variant="ghost"
+                onClick={() => setActiveView('products')}
                 className="mt-6 px-0 text-[#55c7ff] hover:bg-transparent hover:text-white"
               >
                 Explorar análise <ArrowUpRight />
@@ -1249,10 +1338,224 @@ export default function Home() {
           </p>
             </>
           )}
-            </>
+            </>)}
         </div>
       </section>
     </main>
+  );
+}
+
+function ProductsView({
+  data,
+  loading,
+  answer,
+  periodLabel,
+  onBack,
+}: {
+  data: ReportData | null;
+  loading: boolean;
+  answer: string;
+  periodLabel: string;
+  onBack: () => void;
+}) {
+  const [productFilter, setProductFilter] = useState('');
+  const [productCategory, setProductCategory] = useState<
+    'all' | 'pecas' | 'implementos' | 'servicos'
+  >(data?.category ?? 'all');
+  const [selectedFamily, setSelectedFamily] = useState<string | null>(null);
+  const [productsOpen, setProductsOpen] = useState(false);
+  if (!data) {
+    return (
+      <section className="rounded-[22px] border border-dashed border-[#cfd3e4] bg-white px-6 py-14 text-center">
+        <div className="mx-auto grid size-12 place-items-center rounded-2xl bg-[#e4f5fd] text-[#008ad0]">
+          <PackageSearch className="size-6" />
+        </div>
+        <h3 className="mt-4 text-lg font-semibold">Comece escolhendo um cliente ou grupo</h3>
+        <p className="mx-auto mt-2 max-w-xl text-sm text-[#71728a]">
+          Use a pesquisa acima por voz ou texto. O cliente, o período e a categoria serão aplicados automaticamente à análise dos produtos.
+        </p>
+      </section>
+    );
+  }
+  const allProducts = data.products ?? [];
+  const categoryProducts = allProducts.filter(
+    (item) => productCategory === 'all' || item.categoria === productCategory,
+  );
+  const familyMap = new Map<string, { name: string; value: number; products: number }>();
+  for (const item of categoryProducts) {
+    const name = item.familiaApelido || item.familia || 'Sem família';
+    const current = familyMap.get(name) ?? { name, value: 0, products: 0 };
+    current.value += Number(item.faturamento || 0);
+    current.products += 1;
+    familyMap.set(name, current);
+  }
+  const families = [...familyMap.values()].sort((a, b) => b.value - a.value);
+  const normalizedFilter = productFilter.trim().toLocaleLowerCase('pt-BR');
+  const products = categoryProducts.filter((item) =>
+    (!selectedFamily || (item.familiaApelido || item.familia || 'Sem família') === selectedFamily) &&
+    (!normalizedFilter ||
+      item.codigoProduto?.toLocaleLowerCase('pt-BR').includes(normalizedFilter) ||
+      item.produto?.toLocaleLowerCase('pt-BR').includes(normalizedFilter) ||
+      item.familia?.toLocaleLowerCase('pt-BR').includes(normalizedFilter) ||
+      item.familiaApelido?.toLocaleLowerCase('pt-BR').includes(normalizedFilter)),
+  );
+  const total = categoryProducts.reduce((sum, item) => sum + Number(item.faturamento || 0), 0);
+  const categoryText = data.category
+    ? ({ pecas: 'Peças', implementos: 'Implementos', servicos: 'Serviços' } as const)[data.category]
+    : 'Todas as categorias';
+  return (
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[18px] border border-[#dce4e0] bg-white px-5 py-4">
+        <div>
+          <p className="flex items-center gap-2 font-semibold text-[#24233d]">
+            <PackageSearch className="size-4 text-[#008ad0]" /> Produtos da Análise de Faturamento
+          </p>
+          <p className="mt-1 text-xs text-[#71728a]">
+            {answer} · {periodLabel} · {categoryText}
+          </p>
+        </div>
+        <Button variant="outline" className="rounded-full" onClick={onBack}>Voltar à Análise de Faturamento</Button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 rounded-[18px] border border-[#dce4e0] bg-white px-5 py-3">
+        <span className="mr-2 text-xs font-semibold uppercase tracking-[.08em] text-[#71728a]">Tipo de produto</span>
+        {([
+          ['all', 'Geral'],
+          ['pecas', 'Peças'],
+          ['implementos', 'Implementos'],
+          ...(allProducts.some((item) => item.categoria === 'servicos') ? [['servicos', 'Serviços']] : []),
+        ] as Array<['all' | 'pecas' | 'implementos' | 'servicos', string]>).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => {
+              setProductCategory(key);
+              setSelectedFamily(null);
+              setProductFilter('');
+            }}
+            className={`rounded-full border px-4 py-1.5 text-sm font-semibold transition ${productCategory === key ? 'border-[#312d5e] bg-[#312d5e] text-white' : 'border-[#d9dbea] bg-white text-[#56576f] hover:border-[#008ad0] hover:text-[#0079b7]'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {loading && (
+        <div className="rounded-[18px] border border-[#cfe9f5] bg-[#f2faff] px-5 py-4 text-sm font-medium text-[#0079b7]">
+          Carregando famílias e produtos deste cliente…
+        </div>
+      )}
+      <div className="grid gap-3 md:grid-cols-2">
+        <Metric label="Produtos com venda" value={String(categoryProducts.length)} caption="itens distintos no filtro selecionado" />
+        <Metric label="Valor analisado" value={brl(total)} caption="faturamento bruto dos produtos listados" />
+      </div>
+      <div
+        className="rounded-[18px] border border-[#dce4e0] bg-white p-5"
+        onClick={(event) => {
+          const target = event.target as Element;
+          if (!target.closest('[data-family-bar]') && !target.closest('[data-family-action]')) {
+            setSelectedFamily(null);
+          }
+        }}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="font-semibold">Faturamento por família</h3>
+            <p className="mt-1 text-xs text-[#71728a]">Agrupamento pro Familia</p>
+          </div>
+          {selectedFamily && (
+            <Button data-family-action variant="outline" className="h-8 rounded-full text-xs" onClick={() => setSelectedFamily(null)}>Limpar seleção</Button>
+          )}
+        </div>
+        {families.length ? (
+          <ChartContainer config={{ value: { label: 'Faturamento', color: '#008ad0' } }} className="mt-4 h-[320px] w-full">
+            <BarChart data={families.slice(0, 12)} layout="vertical" margin={{ left: 8, right: 76 }}>
+              <CartesianGrid horizontal={false} strokeDasharray="3 3" />
+              <XAxis type="number" tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} tickLine={false} axisLine={false} />
+              <YAxis type="category" dataKey="name" width={150} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+              <ChartTooltip content={<ChartTooltipContent formatter={(value) => brl(Number(value))} />} />
+              <Bar dataKey="value" radius={[0, 6, 6, 0]}>
+                <LabelList
+                  dataKey="value"
+                  position="right"
+                  offset={8}
+                  fill="#56576f"
+                  fontSize={12}
+                  fontWeight={600}
+                  formatter={(value) => new Intl.NumberFormat('pt-BR', {
+                    style: 'percent',
+                    minimumFractionDigits: 1,
+                    maximumFractionDigits: 1,
+                  }).format(total > 0 ? Number(value) / total : 0)}
+                />
+                {families.slice(0, 12).map((family) => (
+                  <Cell
+                    data-family-bar
+                    key={family.name}
+                    fill={!selectedFamily || selectedFamily === family.name ? '#008ad0' : '#cbd5e1'}
+                    className="cursor-pointer"
+                    onClick={() => {
+                      setSelectedFamily((current) => current === family.name ? null : family.name);
+                      setProductsOpen(true);
+                    }}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ChartContainer>
+        ) : (
+          <p className="py-10 text-center text-sm text-[#71728a]">Não há famílias com faturamento neste período.</p>
+        )}
+      </div>
+      <div className="overflow-hidden rounded-[18px] border border-[#dce4e0] bg-white">
+        <div className="flex flex-col justify-between gap-3 border-b border-[#e2e3ec] px-5 py-4 md:flex-row md:items-center">
+          <button className="flex min-w-0 items-center gap-3 text-left" onClick={() => setProductsOpen((open) => !open)} aria-expanded={productsOpen}>
+            <ChevronDown className={`size-4 shrink-0 text-[#312d5e] transition-transform ${productsOpen ? 'rotate-180' : ''}`} />
+            <div>
+              <h3 className="font-semibold">Produtos adquiridos pelo cliente</h3>
+              <p className="mt-1 text-xs text-[#71728a]">
+                {selectedFamily ? `Família selecionada: ${selectedFamily} · ${products.length} produtos` : `${categoryProducts.length} produtos · clique para expandir`}
+              </p>
+            </div>
+          </button>
+          {productsOpen && (
+            <div className="flex min-w-0 items-center gap-2 rounded-xl border border-[#d9dbea] bg-[#f8f9fc] px-3 py-2 md:w-[360px]">
+              <Search className="size-4 shrink-0 text-[#74758f]" />
+              <input value={productFilter} onChange={(event) => setProductFilter(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="Código, produto ou família" aria-label="Filtrar produtos analisados" />
+            </div>
+          )}
+        </div>
+        {productsOpen && (
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-[#f7f9f8]">
+              <TableHead className="pl-6">Produto</TableHead>
+              <TableHead>Família</TableHead>
+              <TableHead className="text-right">Quantidade</TableHead>
+              <TableHead className="text-right">Documentos</TableHead>
+              <TableHead className="text-right">Faturamento</TableHead>
+              <TableHead className="pr-6 text-right">Participação</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {products.map((item) => (
+              <TableRow key={`${item.codigoProduto}-${item.produto}`}>
+                <TableCell className="pl-6">
+                  <span className="block text-xs font-semibold text-[#008ad0]">{item.codigoProduto}</span>
+                  <span className="block max-w-[420px] truncate font-medium">{item.produto}</span>
+                </TableCell>
+                <TableCell className="max-w-[240px] truncate text-sm text-[#62637b]">{item.familia}</TableCell>
+                <TableCell className="text-right tabular-nums">{new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(item.quantidade)}</TableCell>
+                <TableCell className="text-right tabular-nums">{item.documentos}</TableCell>
+                <TableCell className="text-right font-semibold tabular-nums">{brl(item.faturamento)}</TableCell>
+                <TableCell className="pr-6 text-right font-semibold tabular-nums text-[#312d5e]">{pct(total ? item.faturamento / total : 0)}</TableCell>
+              </TableRow>
+            ))}
+            {!products.length && (
+              <TableRow><TableCell colSpan={6} className="py-10 text-center text-sm text-[#71728a]">Nenhum produto encontrado neste contexto.</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -1260,13 +1563,16 @@ function NavItem({
   icon: Icon,
   label,
   active = false,
+  onClick,
 }: {
   icon: typeof LayoutDashboard;
   label: string;
   active?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <button
+      onClick={onClick}
       className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition ${active ? 'bg-white/10 font-medium text-white' : 'text-white/60 hover:bg-white/[.06] hover:text-white'}`}
     >
       <Icon className={`size-4 ${active ? 'text-[#36b8f7]' : ''}`} />
@@ -1452,7 +1758,7 @@ function CategoryCard({
       </div>
       {active && (
         <p className="mt-1.5 text-[10px] font-semibold leading-none text-[#0079b7]">
-          Filtro aplicado ao gráfico
+          Categoria selecionada
         </p>
       )}
     </button>

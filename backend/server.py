@@ -13,6 +13,11 @@ import pyodbc
 from queries import (
     BRANCH_SUMMARY,
     DETAILS,
+    PRODUCT_SUMMARY,
+    OPEN_ORDERS,
+    OPEN_ORDER_ITEMS,
+    OPEN_PROPOSAL_ITEMS,
+    OPEN_PROPOSALS,
     FIND_BUSINESS_GROUP,
     FIND_CLIENTS,
     FIND_CONNECTED_CLIENTS,
@@ -72,7 +77,7 @@ def find_connected_clients(client_ids):
     """Expand all links transitively: CNPJ root, Grupo Empresarial and K_NOMEGRUPO."""
     connected_ids = set(client_ids)
     connected = []
-    for _ in range(10):
+    while connected_ids:
         placeholders = ','.join('?' for _ in connected_ids)
         sql = FIND_CONNECTED_CLIENTS.format(ids=placeholders)
         with connection() as conn:
@@ -82,6 +87,19 @@ def find_connected_clients(client_ids):
             break
         connected_ids.update(expanded_ids)
     return connected
+
+
+def connected_client_groups(clients):
+    """Resolve each candidate separately so unrelated groups are never merged."""
+    groups = []
+    covered = set()
+    for candidate in clients:
+        if int(candidate['id']) in covered:
+            continue
+        members = find_connected_clients([int(candidate['id'])]) or [candidate]
+        groups.append(members)
+        covered.update(int(member['id']) for member in members)
+    return groups
 
 
 CLIENT_SPEECH_ALIASES = {
@@ -177,6 +195,51 @@ def report(client_ids, start, end, category=None, comparison_start=None, compari
     comparison_end = comparison_end or end
     with connection() as conn:
         cur = conn.cursor()
+        # Current open orders across the same resolved client group, regardless of period.
+        open_orders_row = cur.execute(
+            OPEN_ORDERS.format(ids=placeholders), *client_ids,
+        ).fetchone()
+        open_orders = serialize(open_orders_row[0])
+        open_orders_count = int(open_orders_row[1])
+        open_order_items = rows_as_dict(cur.execute(
+            OPEN_ORDER_ITEMS.format(ids=placeholders), *client_ids,
+        ))
+        # Aggregate proposal headers once, without multiplying their totals by item count.
+        open_proposals_row = cur.execute(
+            OPEN_PROPOSALS.format(ids=placeholders), *client_ids,
+        ).fetchone()
+        open_proposals = serialize(open_proposals_row[0])
+        open_proposals_count = int(open_proposals_row[1])
+        open_proposal_items = rows_as_dict(cur.execute(
+            OPEN_PROPOSAL_ITEMS.format(ids=placeholders), *client_ids,
+        ))
+        open_by_category = {}
+        for key in ('pecas', 'implementos', 'servicos'):
+            family_filter = category_clause(key)
+            orders_sql = OPEN_ORDERS.format(ids=placeholders) + f"""
+              AND EXISTS (
+                SELECT 1 FROM CM_ORDEMVENDAITENS I
+                JOIN PD_PRODUTOS P ON P.HANDLE = I.PRODUTO
+                JOIN PD_FAMILIASPRODUTOS FAM ON FAM.HANDLE = P.FAMILIA
+                WHERE I.ORDEMVENDA = OV.HANDLE AND {family_filter}
+              )
+            """
+            proposals_sql = OPEN_PROPOSALS.format(ids=placeholders) + f"""
+              AND EXISTS (
+                SELECT 1 FROM CM_CONTRATOITENS I
+                JOIN PD_PRODUTOS P ON P.HANDLE = I.PRODUTO
+                JOIN PD_FAMILIASPRODUTOS FAM ON FAM.HANDLE = P.FAMILIA
+                WHERE I.CONTRATO = A.HANDLE AND {family_filter}
+              )
+            """
+            orders_row = cur.execute(orders_sql, *client_ids).fetchone()
+            proposals_row = cur.execute(proposals_sql, *client_ids).fetchone()
+            open_by_category[key] = {
+                'openOrders': serialize(orders_row[0]),
+                'openOrdersCount': int(orders_row[1]),
+                'openProposals': serialize(proposals_row[0]),
+                'openProposalsCount': int(proposals_row[1]),
+            }
         monthly = summary_rows(cur, summary_sql, client_ids, start, end)
         comparison_monthly = summary_rows(cur, summary_sql, client_ids, comparison_start, comparison_end)
         branches = rows_as_dict(cur.execute(
@@ -210,6 +273,13 @@ def report(client_ids, start, end, category=None, comparison_start=None, compari
         branch['share'] = (float(branch['liquido']) / totals['liquido']) if totals['liquido'] else 0
     return {
         'totals': totals, 'monthly': monthly, 'details': [], 'branches': branches,
+        'openOrders': open_orders,
+        'openOrdersCount': open_orders_count,
+        'openOrderItems': open_order_items,
+        'openProposals': open_proposals,
+        'openProposalsCount': open_proposals_count,
+        'openProposalItems': open_proposal_items,
+        'openByCategory': open_by_category,
         'categoryTotals': category_totals, 'categoryMonthly': category_monthly,
         'comparison': {
             'totals': comparison_totals,
@@ -220,6 +290,13 @@ def report(client_ids, start, end, category=None, comparison_start=None, compari
             'end': comparison_end.isoformat() if isinstance(comparison_end, (date, datetime)) else comparison_end,
         },
     }
+
+
+def product_report(client_ids, start, end, category=None):
+    placeholders = ','.join('?' for _ in client_ids)
+    sql = PRODUCT_SUMMARY.format(ids=placeholders, category_filter=category_clause(category))
+    with connection() as conn:
+        return rows_as_dict(conn.cursor().execute(sql, *client_ids, start, end))
 
 
 MONTHS = {
@@ -331,6 +408,16 @@ class Handler(BaseHTTPRequestHandler):
                 ids = [int(value) for value in params['clientId'][0].split(',')]
                 data = report(ids, date.fromisoformat(params['start'][0]), date.fromisoformat(params['end'][0]))
                 return self.send_json(200, data)
+            if parsed.path == '/api/products':
+                ids = [int(value) for value in params['clientId'][0].split(',')]
+                category = params.get('category', [None])[0] or None
+                products = product_report(
+                    ids,
+                    date.fromisoformat(params['start'][0]),
+                    date.fromisoformat(params['end'][0]),
+                    category,
+                )
+                return self.send_json(200, {'products': products})
             return self.send_json(404, {'error': 'Rota não encontrada'})
         except Exception as exc:
             return self.send_json(500, {'error': str(exc)})
@@ -372,22 +459,16 @@ class Handler(BaseHTTPRequestHandler):
             if not clients:
                 return self.send_json(404, {'error': f'Cliente “{client_term}” não encontrado.'})
             if grouping == 'cnpj':
-                documented_groups = client_groups(clients)
-                if len(documented_groups) == 1:
-                    clients = next(iter(documented_groups.values()))
-                elif len(documented_groups) > 1:
+                resolved_groups = connected_client_groups(clients)
+                if len(resolved_groups) > 1:
                     choices = [
-                        {'root': root, 'count': len(items), 'name': items[0]['nome'], 'clients': items}
-                        for root, items in documented_groups.items()
+                        {'root': re.sub(r'\D', '', str(items[0].get('documento') or ''))[:8],
+                         'count': len(items), 'name': items[0]['nome'], 'clients': items}
+                        for items in resolved_groups
                     ]
                     return self.send_json(409, {
-                        'error': 'Foram encontrados mais de um grupo empresarial. Selecione o CNPJ-base desejado.',
+                        'error': 'Foram encontrados grupos sem vínculo cadastral entre si. Informe o código ou CNPJ do cliente desejado.',
                         'needsSelection': True, 'groups': choices, 'year': year,
-                    })
-                elif len(clients) > 1:
-                    return self.send_json(409, {
-                        'error': 'Foram encontrados vários cadastros sem CNPJ. Informe o código do cliente.',
-                        'needsSelection': True, 'clients': clients, 'year': year,
                     })
             primary_client = clients[0]
             connected_clients = find_connected_clients([item['id'] for item in clients])
