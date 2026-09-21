@@ -195,6 +195,22 @@ const pct = (value: number) =>
   }).format(value);
 
 export default function Home() {
+  const [currentUser, setCurrentUser] = useState<{ login: string; name: string; initials: string } | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/api/me', { cache: 'no-store', signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const user = await response.json();
+        if (!controller.signal.aborted && user && typeof user === 'object' &&
+            'authenticated' in user && user.authenticated === true &&
+            'login' in user && 'name' in user && 'initials' in user &&
+            typeof user.login === 'string' && typeof user.name === 'string' &&
+            typeof user.initials === 'string') setCurrentUser({ login: user.login, name: user.name, initials: user.initials });
+      })
+      .catch(() => { /* Keep a neutral greeting when identity is unavailable. */ });
+    return () => controller.abort();
+  }, []);
   const [activeView, setActiveView] = useState<'overview' | 'products' | 'orders' | 'proposals' | 'order-products' | 'proposal-products'>('overview');
   const [query, setQuery] = useState('');
   const [answer, setAnswer] = useState('');
@@ -577,15 +593,15 @@ export default function Home() {
               <CircleHelp className="size-4" />
               <span className="hidden sm:inline">Como perguntar</span>
             </Button>
-            <div className="grid size-9 place-items-center rounded-full bg-[#e1f3fc] text-xs font-bold text-[#006da6]">
-              FA
+            <div title={currentUser?.login ?? 'Usuário não identificado'} aria-label={currentUser ? `Usuário: ${currentUser.login}` : 'Usuário não identificado'} className="grid size-9 place-items-center rounded-full bg-[#e1f3fc] text-xs font-bold text-[#006da6]">
+              {currentUser?.initials ?? <Users className="size-4" aria-hidden="true" />}
             </div>
           </div>
         </header>
         <div className="mx-auto w-full max-w-[1400px] px-5 py-7 md:px-8">
           <div className="mb-7 flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
             <div>
-              <p className="mb-1 text-sm text-[#686980]">Olá, Fabio.</p>
+              <p className="mb-1 text-sm text-[#686980]">{currentUser ? `Olá, ${currentUser.name}.` : 'Olá!'}</p>
               <h2 className="text-2xl font-semibold tracking-[-.035em] md:text-[30px]">
                 {activeView === 'products'
                   ? data

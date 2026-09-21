@@ -378,6 +378,26 @@ def interpret(question):
     return client, year, category, start, end
 
 
+def request_identity(headers, peer, trust_iis=False):
+    # Display only. IIS remains responsible for authentication/authorization.
+    # Enable only behind IIS, which MUST overwrite this header from LOGON_USER.
+    unknown = {'authenticated': False, 'login': None, 'name': None, 'initials': None}
+    if not trust_iis or peer not in ('127.0.0.1', '::1'):
+        return unknown
+    values = headers.get_all('X-Pulso-User', [])
+    if len(values) != 1:
+        return unknown
+    login = values[0].strip()
+    if not login or len(login) > 256 or any(ord(char) < 32 for char in login):
+        return unknown
+    name = login.rsplit('\\', 1)[-1].split('@', 1)[0]
+    parts = [part for part in re.split(r'[.\s_-]+', name) if part]
+    if not parts:
+        return unknown
+    initials = (parts[0][0] + parts[-1][0] if len(parts) > 1 else parts[0][:2]).upper()
+    return {'authenticated': True, 'login': login, 'name': name, 'initials': initials}
+
+
 class Handler(BaseHTTPRequestHandler):
     def send_json(self, status, payload):
         body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
@@ -401,6 +421,11 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
         try:
+            if parsed.path == '/api/me':
+                return self.send_json(200, request_identity(
+                    self.headers, self.client_address[0],
+                    getattr(self.server, 'trust_iis_identity', False),
+                ))
             if parsed.path == '/api/health':
                 with connection() as conn:
                     db = conn.cursor().execute('SELECT DB_NAME()').fetchval()
@@ -512,9 +537,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', type=int, default=8000)
     parser.add_argument('--probe', metavar='CLIENT')
+    parser.add_argument('--trust-iis-identity', action='store_true',
+                        help='Use only when IIS overwrites X-Pulso-User with LOGON_USER.')
     args = parser.parse_args()
     if args.probe:
         print(json.dumps(find_clients(args.probe), ensure_ascii=False, indent=2))
     else:
         print(f'Pulso Comercial API em http://localhost:{args.port}')
-        ThreadingHTTPServer(('127.0.0.1', args.port), Handler).serve_forever()
+        server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
+        server.trust_iis_identity = args.trust_iis_identity
+        server.serve_forever()

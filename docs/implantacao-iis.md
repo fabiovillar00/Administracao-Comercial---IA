@@ -30,12 +30,37 @@ Em desenvolvimento, iniciar o backend e `npm run dev`. O Vite encaminha `/api` p
 
 ARR com proxy habilitado, duração do cache em memória em zero e cache em disco desmarcado.
 
-Regras de entrada, nesta ordem, com anexação de query string e interrupção das regras seguintes:
+Regras de entrada, nesta ordem, todas com interrupção das regras seguintes:
 
-1. API: padrão `^api(/.*)?$`, destino `http://127.0.0.1:8000/{R:0}`.
-2. Interface: padrão `^(?!api(?:/|$)|teste\.html$).*`, destino `http://127.0.0.1:3000/{R:0}`.
+1. Usuário: padrão `^(api/me/?|pulso-user\.ashx)$`, destino local `pulso-user.ashx`, sem anexar query string.
+2. API: padrão `^api(/.*)?$`, destino `http://127.0.0.1:8000/{R:0}`, anexando query string.
+3. Interface: padrão `^(?!api(?:/|$)|teste\.html$).*`, destino `http://127.0.0.1:3000/{R:0}`, anexando query string.
 
 Manter autenticação anônima desabilitada e autenticação Windows habilitada. As portas internas não precisam ser expostas na rede.
+
+## Identificação do usuário (atualização posterior ao piloto)
+
+O avatar e a saudação consultam `/api/me`, sem cache. O nome mostrado é o login do usuário, sem o domínio; não é uma consulta ao nome completo no AD. Localmente ou sem identidade encaminhada, a interface exibe `Olá!` e um ícone neutro.
+
+### Correção: endpoint nativo do IIS
+
+O teste no servidor confirmou que a API aceita o cabeçalho localmente, mas LOGON_USER não chega preenchido pelo URL Rewrite, apesar da autenticação Windows estar habilitada. O encaminhamento descrito abaixo foi uma tentativa inicial; não o usar como solução definitiva.
+
+A solução substituta é `deploy/iis/pulso-user.ashx`, que lê `Request.LogonUserIdentity` no processamento autenticado do IIS. Requer `Web-Asp-Net45`, pool CLR v4.0 em modo Integrated. Copiar o arquivo para a raiz do site. Criar uma regra ANTES das regras de API/interface: padrão `^(api/me/?|pulso-user\.ashx)$`, reescrita local para `pulso-user.ashx`, stopProcessing=true e sem anexar query string. Isso mantém `/api/me` no IIS, sem encaminhá-lo ao Python. Não mudar autenticação ou autorização do site.
+
+O handler responde sem cache e nunca lê identidade de cabeçalhos fornecidos pelo cliente. Em 21/09/2026, `/api/me` retornou a conta real autenticada e a interface mostrou seu login e iniciais corretamente no servidor. A validação com outro usuário está pendente; repetir também o teste de uma conta sem autorização. Após validar, remover o serverVariable HTTP_X_PULSO_USER da regra API e retirar `--trust-iis-identity` da tarefa Python; reiniciar somente a tarefa API. Essa limpeza ainda não foi confirmada.
+
+### Histórico da tentativa com cabeçalho
+
+Configuração inicial:
+
+1. No IIS, em `PulsoComercial > URL Rewrite > View Server Variables`, permitir `HTTP_X_PULSO_USER` (requer administrador).
+2. Editar SOMENTE a regra `Pulso - API`, abrir `Server Variables` e adicionar `HTTP_X_PULSO_USER` com valor `{LOGON_USER}`. Manter `Replace existing value` habilitado: nunca preservar um cabeçalho enviado pelo navegador.
+3. Na tarefa `Pulso - API`, argumentos: `-u "C:\Pulso\App\backend\server.py" --trust-iis-identity`.
+4. Publicar backend e interface compilada, com backup e parada das tarefas durante a troca. Preservar `.venv`, credenciais e configurações existentes do IIS.
+5. Reiniciar as tarefas e validar `/api/me` com duas contas do domínio, em sessões de navegador separadas. Esperado: login de cada usuário, nunca a conta de serviço. Confirmar que um cabeçalho X-Pulso-User fornecido pelo cliente é sobrescrito pelo IIS.
+
+O backend aceita essa informação somente com a opção explícita e origem loopback. A autorização continua no IIS. Não expor a API diretamente. Essa tentativa foi substituída pelo handler nativo acima; o código permanece para compatibilidade com a tarefa já instalada.
 
 ## Tarefas do Windows
 
