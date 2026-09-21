@@ -360,6 +360,8 @@ def interpret(question):
         rf'\bempresa\s+(.+?){period_boundary}',
         rf'\b(?:acumulado(?:\s+geral)?|vendas?|faturamento)\s+(?:do|da|de)\s+(.+?){period_boundary}',
         rf'\b(?:acumulado(?:\s+geral)?|vendas?|faturamento)\s+(.+?){period_boundary}',
+        # A bare client/group name implies the same revenue query.
+        rf'^\s*(.+?){period_boundary}',
     ):
         client_match = re.search(pattern, question, re.I)
         if client_match:
@@ -381,6 +383,7 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
         self.send_response(status)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store')
         self.send_header('Access-Control-Allow-Origin', 'http://localhost:3000')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.send_header('Content-Length', str(len(body)))

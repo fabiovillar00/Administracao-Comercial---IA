@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowDownToLine,
   ArrowUpRight,
@@ -13,6 +13,7 @@ import {
   Mic,
   PackageSearch,
   Search,
+  RefreshCw,
   Send,
   Sparkles,
   TrendingUp,
@@ -200,6 +201,9 @@ export default function Home() {
   const [listening, setListening] = useState(false);
   const [data, setData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(false);
+  const requestRunning = useRef(false);
+  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  const [lastRequest, setLastRequest] = useState<{ question: string; filters?: { clientTerm?: string; groupName?: string; start?: string; end?: string } } | null>(null);
   const [productsLoading, setProductsLoading] = useState(false);
   const [error, setError] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(true);
@@ -221,17 +225,23 @@ export default function Home() {
     question = query,
     filters?: { clientTerm?: string; groupName?: string; start?: string; end?: string },
     speechAlternatives: string[] = [],
+    refreshing = false,
   ) => {
     if (!question.trim() && !filters?.clientTerm && !filters?.groupName) return;
+    if (requestRunning.current) return;
+    requestRunning.current = true;
     setLoading(true);
     setError('');
     try {
       const candidates = [...new Set([question, ...speechAlternatives])];
       let response: Response | null = null;
       let result: ReportData & { error?: string } | null = null;
+      let successfulQuestion = question;
       for (const candidate of candidates) {
-        response = await fetch('http://localhost:8000/api/ask', {
+        successfulQuestion = candidate;
+        response = await fetch('/api/ask', {
           method: 'POST',
+          cache: 'no-store',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ question: candidate, ...filters }),
         });
@@ -244,9 +254,11 @@ export default function Home() {
           result.error || 'Não foi possível concluir a consulta.',
         );
       setData(result);
+      setUpdatedAt(new Date());
+      setLastRequest({ question: successfulQuestion, filters: filters ? { ...filters } : undefined });
       setAnswer(result.client.nome);
-      setSelectedChartCategory(result.category ?? null);
-      if (filters) {
+      if (!refreshing) setSelectedChartCategory(result.category ?? null);
+      if (filters && !refreshing) {
         setClientPreview({
           codigo: result.client.codigo ?? clientFilter,
           nome: result.client.nome,
@@ -262,6 +274,7 @@ export default function Home() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Falha na consulta.');
     } finally {
+      requestRunning.current = false;
       setLoading(false);
     }
   };
@@ -281,14 +294,18 @@ export default function Home() {
     });
     if (data.category) params.set('category', data.category);
     setProductsLoading(true);
-    fetch(`http://localhost:8000/api/products?${params}`)
+    let cancelled = false;
+    fetch(`/api/products?${params}`, { cache: 'no-store' })
       .then((response) => {
         if (!response.ok) throw new Error('Não foi possível carregar os produtos.');
         return response.json() as Promise<{ products: ReportData['products'] }>;
       })
-      .then((result) => setData((current) => current ? { ...current, products: result.products ?? [] } : current))
-      .catch((reason) => setError(reason instanceof Error ? reason.message : 'Falha ao carregar produtos.'))
-      .finally(() => setProductsLoading(false));
+      .then((result) => {
+        if (!cancelled) setData((current) => current === data ? { ...current, products: result.products ?? [] } : current);
+      })
+      .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : 'Falha ao carregar produtos.'); })
+      .finally(() => { if (!cancelled) setProductsLoading(false); });
+    return () => { cancelled = true; setProductsLoading(false); };
   }, [activeView, data]);
   useEffect(() => {
     const term = clientFilter.trim();
@@ -300,7 +317,7 @@ export default function Home() {
       setClientSearching(true);
       try {
         const response = await fetch(
-          `http://localhost:8000/api/clients?q=${encodeURIComponent(term)}`,
+          `/api/clients?q=${encodeURIComponent(term)}`,
         );
         const result = (await response.json()) as { clients?: ClientOption[] };
         setClientMatches((result.clients ?? []).slice(0, 10));
@@ -327,7 +344,7 @@ export default function Home() {
     }
     try {
       const response = await fetch(
-        `http://localhost:8000/api/clients?q=${encodeURIComponent(clientFilter.trim())}`,
+        `/api/clients?q=${encodeURIComponent(clientFilter.trim())}`,
       );
       const result = (await response.json()) as { clients?: ClientOption[] };
       const matches = (result.clients ?? []) as ClientOption[];
@@ -577,9 +594,14 @@ export default function Home() {
                   : 'O que você quer descobrir hoje?'}
               </h2>
             </div>
-            <div className="flex items-center gap-2 text-sm text-[#62637b]">
-              <span className="size-2 rounded-full bg-[#008ad0]" /> Dados
-              atualizados às 08:42
+            <div className="flex flex-wrap items-center gap-3 text-sm text-[#62637b]">
+              <span role="status" className="flex items-center gap-2">
+                <span className={`size-2 rounded-full ${updatedAt ? 'bg-[#008ad0]' : 'bg-[#b5b6c5]'}`} />
+                {loading ? 'Consultando dados…' : updatedAt ? `Última consulta concluída: ${updatedAt.toLocaleString('pt-BR')}` : 'Nenhuma consulta realizada'}
+              </span>
+              <Button variant="outline" disabled={!lastRequest || loading || productsLoading} onClick={() => lastRequest && void submit(lastRequest.question, lastRequest.filters, [], true)}>
+                <RefreshCw className={`size-4 ${loading ? 'animate-spin' : ''}`} /> Atualizar dados
+              </Button>
             </div>
           </div>
           <div className="mb-7 rounded-[22px] border border-[#d9dbea] bg-white p-2 shadow-[0_12px_40px_rgba(49,45,94,.08)]">
@@ -590,7 +612,7 @@ export default function Home() {
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && void submit()}
                 className="min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-[#9698aa]"
-                placeholder="Ex.: Quero o acumulado do cliente Dcarvalho em 2026 e o detalhamento"
+                placeholder="Digite ou fale o cliente ou grupo. Ex.: BP 2026 ou Vale Verde"
                 aria-label="Pergunte aos dados comerciais"
               />
               <Button
