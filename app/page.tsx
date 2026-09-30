@@ -1,6 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { revenueEvolution } from '@/lib/revenue-evolution';
+import { APP_VERSION } from '@/lib/app-version';
+import { UsageAdminLink } from '@/components/usage-tracker';
 import {
   ArrowDownToLine,
   ArrowUpRight,
@@ -48,7 +51,9 @@ type ReportData = {
   period?: { start: string; end: string };
   category: 'pecas' | 'implementos' | 'servicos' | null;
   understoodAs?: string | null;
-  grouping?: 'cnpj' | 'grupoempresarial' | 'named_group' | 'connected_group';
+  allOrdersLoaded?: boolean;
+  allProposalsLoaded?: boolean;
+  grouping?: 'all' | 'cnpj' | 'grupoempresarial' | 'named_group' | 'connected_group';
   matrixCode?: number | null;
   openOrders?: number;
   openOrdersCount?: number;
@@ -195,6 +200,19 @@ const pct = (value: number) =>
   }).format(value);
 
 export default function Home() {
+  const [footerDate, setFooterDate] = useState('');
+  useEffect(() => {
+    const updateDate = () => setFooterDate(new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+    }).format(new Date()));
+    updateDate();
+    const timer = window.setInterval(updateDate, 60000);
+    window.addEventListener('focus', updateDate);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', updateDate);
+    };
+  }, []);
   const [currentUser, setCurrentUser] = useState<{ login: string; name: string; initials: string } | null>(null);
   useEffect(() => {
     const controller = new AbortController();
@@ -212,11 +230,13 @@ export default function Home() {
     return () => controller.abort();
   }, []);
   const [activeView, setActiveView] = useState<'overview' | 'products' | 'orders' | 'proposals' | 'order-products' | 'proposal-products'>('overview');
+  useEffect(() => { window.dispatchEvent(new Event('pulso-view')); }, [activeView]);
   const [query, setQuery] = useState('');
   const [answer, setAnswer] = useState('');
   const [listening, setListening] = useState(false);
   const [data, setData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [openItemsLoading, setOpenItemsLoading] = useState(false);
   const requestRunning = useRef(false);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [lastRequest, setLastRequest] = useState<{ question: string; filters?: { clientTerm?: string; groupName?: string; start?: string; end?: string } } | null>(null);
@@ -274,7 +294,13 @@ export default function Home() {
       setLastRequest({ question: successfulQuestion, filters: filters ? { ...filters } : undefined });
       setAnswer(result.client.nome);
       if (!refreshing) setSelectedChartCategory(result.category ?? null);
-      if (filters && !refreshing) {
+      if (!refreshing && (!filters || result.grouping === 'all')) {
+        setClientFilter(result.grouping === 'all' ? '' : result.client.codigo ?? '');
+        setClientPreview(result.grouping === 'all' ? null : { codigo: result.client.codigo ?? '', nome: result.client.nome, documento: result.client.documento ?? '' });
+        setGroupFilter('');
+        if (filters && result.grouping === 'all') setQuery('faturamento geral');
+      }
+      if (filters && !refreshing && result.grouping !== 'all') {
         setClientPreview({
           codigo: result.client.codigo ?? clientFilter,
           nome: result.client.nome,
@@ -302,12 +328,33 @@ export default function Home() {
     setEndFilter(inclusiveEnd.toISOString().slice(0, 10));
   }, [data?.period?.start, data?.period?.end]);
   useEffect(() => {
+    if (data?.grouping !== 'all') return;
+    const orders = activeView.startsWith('order');
+    const proposals = activeView.startsWith('proposal');
+    if ((!orders && !proposals) || (orders ? data.allOrdersLoaded : data.allProposalsLoaded)) return;
+    const controller = new AbortController();
+    setOpenItemsLoading(true);
+    fetch(`/api/open-items?kind=${orders ? 'orders' : 'proposals'}`, { signal: controller.signal })
+      .then(response => {
+        if (!response.ok) throw new Error('Não foi possível carregar os itens.');
+        return response.json() as Promise<{ items: OpenItem[] }>;
+      })
+      .then(result => setData(current => current === data ? {
+        ...current,
+        ...(orders ? { openOrderItems: result.items, allOrdersLoaded: true } : { openProposalItems: result.items, allProposalsLoaded: true }),
+      } : current))
+      .catch(reason => { if (!controller.signal.aborted) setError(reason.message); })
+      .finally(() => { if (!controller.signal.aborted) setOpenItemsLoading(false); });
+    return () => { controller.abort(); setOpenItemsLoading(false); };
+  }, [activeView, data]);
+  useEffect(() => {
     if (activeView !== 'products' || !data?.period || data.products) return;
     const params = new URLSearchParams({
       clientId: data.client.ids.join(','),
       start: data.period.start,
       end: data.period.end,
     });
+    if (data.grouping === 'all') params.set('scope', 'all');
     if (data.category) params.set('category', data.category);
     setProductsLoading(true);
     let cancelled = false;
@@ -346,9 +393,9 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, [clientFilter, clientPreview?.codigo]);
   const applyFilters = () => {
-    void submit(query, {
-      clientTerm: clientFilter || undefined,
-      groupName: clientFilter ? undefined : groupFilter || undefined,
+    void submit('faturamento', {
+      clientTerm: clientFilter.trim(),
+      groupName: clientFilter ? '' : groupFilter.trim(),
       start: startFilter || undefined,
       end: endFilter || undefined,
     });
@@ -412,12 +459,7 @@ export default function Home() {
   const selectedMonthly = selectedChartCategory
     ? data?.categoryMonthly?.[selectedChartCategory]
     : data?.monthly;
-  const monthly = (selectedMonthly ?? []).map((item) => ({
-    month: new Intl.DateTimeFormat('pt-BR', { month: 'short' })
-      .format(new Date(`${item.mes}T12:00:00`))
-      .replace('.', ''),
-    value: item.liquido,
-  }));
+  const evolution = revenueEvolution(selectedMonthly ?? [], data?.period);
   const categoryLabel =
     data?.category === 'pecas'
       ? 'Peças'
@@ -447,11 +489,12 @@ export default function Home() {
   const selectedCompositionShare = categoryGrandTotal
     ? selectedCompositionValue / categoryGrandTotal
     : 0;
+  const isAllClients = data?.grouping === 'all';
   const isBusinessGroup = data?.grouping === 'grupoempresarial';
   const isNamedGroup = data?.grouping === 'named_group';
   const isConnectedGroup = data?.grouping === 'connected_group';
   const consolidatedLabel =
-    isBusinessGroup || isNamedGroup || isConnectedGroup
+    isAllClients ? 'clientes com movimento' : isBusinessGroup || isNamedGroup || isConnectedGroup
       ? 'empresas do grupo'
       : 'filiais consolidadas';
   const chartCategoryLabel = selectedChartCategory
@@ -530,7 +573,7 @@ export default function Home() {
   );
 
   return (
-    <main className="min-h-screen bg-[#f6f7fb] text-[#24233d]">
+    <main data-usage-view={activeView} className="min-h-screen bg-[#f6f7fb] text-[#24233d]">
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-[248px] flex-col border-r border-[#464174] bg-[#312d5e] px-4 py-5 text-white lg:flex">
         <div className="flex items-center gap-3 px-2">
           <div className="grid size-10 place-items-center rounded-xl bg-[#008ad0] text-white">
@@ -560,9 +603,9 @@ export default function Home() {
             <NavItem icon={PackageSearch} label="Produtos" active={activeView === 'proposal-products'} onClick={() => setActiveView('proposal-products')} />
           </div>
           </div>
+          <a href="/carteira" className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-white/80 hover:bg-white/10"><Sparkles className="size-4" />Carteira inteligente</a>
+          <UsageAdminLink />
           <NavItem icon={Sparkles} label="Perguntar aos dados" />
-          <NavItem icon={Users} label="Clientes" />
-          <NavItem icon={FileText} label="Relatórios" />
         </nav>
         <div className="mt-auto rounded-2xl border border-white/10 bg-white/[.06] p-4">
           <div className="mb-3 grid size-9 place-items-center rounded-lg bg-white/10">
@@ -578,8 +621,11 @@ export default function Home() {
       <section className="min-h-screen lg:ml-[248px]">
         <header className="flex h-[72px] items-center justify-between border-b border-[#ddddeb] bg-white/80 px-5 backdrop-blur md:px-8">
           <div>
-            <p className="text-xs font-medium uppercase tracking-[.14em] text-[#686980]">
+            <p className="flex items-center gap-3 text-xs font-medium uppercase tracking-[.14em] text-[#686980]">
               {activeView.startsWith('order') ? 'Pedidos' : activeView.startsWith('proposal') ? 'Propostas' : 'Faturamento'}
+              <span className="text-[10px] font-normal tracking-normal text-[#85869a]" title={`Versão do aplicativo: ${APP_VERSION}`}>
+                {APP_VERSION}
+              </span>
             </p>
             <h1 className="text-lg font-semibold tracking-tight">
               {activeView === 'products' ? 'Análise de Faturamento / Produtos' : activeView.startsWith('order') ? (activeView === 'order-products' ? 'Pedidos / Produtos' : 'Pedidos em aberto') : activeView.startsWith('proposal') ? (activeView === 'proposal-products' ? 'Propostas / Produtos' : 'Propostas em aberto') : 'Análise de Faturamento'}
@@ -628,7 +674,7 @@ export default function Home() {
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && void submit()}
                 className="min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-[#9698aa]"
-                placeholder="Digite ou fale o cliente ou grupo. Ex.: BP 2026 ou Vale Verde"
+                placeholder="Ex.: hoje, este mês ou BP este ano"
                 aria-label="Pergunte aos dados comerciais"
               />
               <Button
@@ -670,7 +716,8 @@ export default function Home() {
               </p>
             )}
           </div>
-          {(['orders', 'proposals', 'order-products', 'proposal-products'].includes(activeView)) && (
+          {openItemsLoading && <p className="mb-4 text-sm text-[#0079b7]">Carregando itens…</p>}
+          {(!openItemsLoading && ['orders', 'proposals', 'order-products', 'proposal-products'].includes(activeView)) && (
             <OpenDocumentsView
               key={`${activeView.startsWith('order') ? 'orders' : 'proposals'}-${data?.client.ids.join(',') ?? ''}`}
               kind={activeView.startsWith('order') ? 'orders' : 'proposals'}
@@ -696,7 +743,7 @@ export default function Home() {
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="flex items-center gap-2 text-sm font-semibold">
-                <Sparkles className="size-4 text-[#008ad0]" /> Resultado para{' '}
+                <Sparkles className="size-4 text-[#008ad0]" /> {isAllClients ? 'Faturamento geral ·' : 'Resultado para'}{' '}
                 {answer}
               </p>
               <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-[#71728a]">
@@ -707,7 +754,7 @@ export default function Home() {
                   </HoverCardTrigger>
                   <HoverCardContent align="start" className="w-[520px] p-4">
                     <p className="mb-3 text-sm font-semibold text-[#312d5e]">
-                      {isBusinessGroup
+                      {isAllClients ? 'clientes com movimento no período.' : isBusinessGroup
                         ? `Empresas vinculadas à matriz código ${data?.matrixCode}`
                         : isConnectedGroup
                           ? 'Unidades vinculadas por CNPJ-base, Grupo Empresarial ou nome do grupo'
@@ -779,7 +826,7 @@ export default function Home() {
                     if (event.target.value) setGroupFilter('');
                   }}
                   onBlur={() => void previewClient()}
-                  placeholder="Código, nome ou CNPJ"
+                  placeholder="Todos os clientes"
                   autoComplete="off"
                   className="h-10 rounded-lg border border-[#d9dbea] bg-[#fafafe] px-3 text-sm font-normal outline-none transition focus:border-[#008ad0] focus:ring-2 focus:ring-[#008ad0]/15"
                 />
@@ -862,8 +909,7 @@ export default function Home() {
                 onClick={applyFilters}
                 disabled={
                   loading ||
-                  Boolean(clientFilter && !clientPreview) ||
-                  (!data && !clientPreview && !groupFilter)
+                  Boolean(clientFilter && !clientPreview)
                 }
                 className="h-10 rounded-lg bg-[#312d5e] px-5 hover:bg-[#403b78]"
               >
@@ -1005,8 +1051,9 @@ export default function Home() {
                 <div>
                   <h3 className="font-semibold">Evolução do faturamento</h3>
                   <p className="mt-1 text-xs text-[#71827b]">
-                    Valores líquidos por mês · {chartCategoryLabel}
+                    Valores líquidos por {evolution.annual ? 'ano' : 'mês'} · {chartCategoryLabel}
                   </p>
+                  {evolution.annual && <p className="mt-1 text-xs text-[#71827b]">Anos parciais consideram somente as datas selecionadas.</p>}
                 </div>
                 {selectedChartCategory && (
                   <button
@@ -1022,7 +1069,7 @@ export default function Home() {
                 className="h-[260px] w-full aspect-auto"
               >
                 <AreaChart
-                  data={monthly}
+                  data={evolution.points}
                   margin={{ left: 0, right: 12, top: 10 }}
                 >
                   <defs>
@@ -1041,7 +1088,7 @@ export default function Home() {
                   </defs>
                   <CartesianGrid vertical={false} strokeDasharray="4 4" />
                   <XAxis
-                    dataKey="month"
+                    dataKey="label"
                     tickLine={false}
                     axisLine={false}
                     tickMargin={10}
@@ -1079,17 +1126,17 @@ export default function Home() {
                 <Sparkles className="size-4" /> Leitura rápida
               </div>
               <p className="text-lg font-medium leading-relaxed tracking-[-.02em]">
-                O grupo {answer} alcançou{' '}
+                {isAllClients ? 'Todos os clientes totalizaram' : `O grupo ${answer} alcançou`}{' '}
                 <strong className="text-[#55c7ff]">
                   {brl(data?.totals.liquido ?? 0)}
                 </strong>{' '}
-                de faturamento líquido em {data?.year ?? 2026}.
+                de faturamento líquido no período {periodLabel}.
               </p>
               <div className="my-6 h-px bg-white/10" />
               <ul className="space-y-4 text-sm text-white/75">
                 <li>
                   • {data?.client.branchCount ?? 0}{' '}
-                  {isBusinessGroup
+                  {isAllClients ? 'clientes com movimento no período.' : isBusinessGroup
                     ? 'empresas vinculadas pelo campo Grupo Empresarial.'
                     : isConnectedGroup
                       ? 'empresas consolidadas pelos três vínculos cadastrais.'
@@ -1099,11 +1146,11 @@ export default function Home() {
                 </li>
                 <li>
                   • Pedidos em Aberto: Qtd.: {selectedOpen?.openOrdersCount != null ? selectedOpen.openOrdersCount.toLocaleString('pt-BR') : '—'} - {selectedOpen?.openOrders != null ? brl(selectedOpen.openOrders) : '—'}
-                  <span className="mt-1 block text-xs text-[#c4c5df]">{chartCategoryLabel} · posição atual do grupo · todas as datas</span>
+                  <span className="mt-1 block text-xs text-[#c4c5df]">{chartCategoryLabel} · posição atual {isAllClients ? 'de todos os clientes' : 'do grupo'} · todas as datas</span>
                 </li>
                 <li>
                   • Propostas em Aberto: Qtd.: {selectedOpen?.openProposalsCount != null ? selectedOpen.openProposalsCount.toLocaleString('pt-BR') : '—'} - {selectedOpen?.openProposals != null ? brl(selectedOpen.openProposals) : '—'}
-                  <span className="mt-1 block text-xs text-[#c4c5df]">{chartCategoryLabel} · posição atual do grupo · todas as datas</span>
+                  <span className="mt-1 block text-xs text-[#c4c5df]">{chartCategoryLabel} · posição atual {isAllClients ? 'de todos os clientes' : 'do grupo'} · todas as datas</span>
                 </li>
               </ul>
               <Button
@@ -1118,9 +1165,9 @@ export default function Home() {
           <details className="group mt-4 overflow-hidden rounded-[18px] border border-[#dce4e0] bg-white">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 outline-none transition hover:bg-[#f8f9fc] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#008ad0] md:px-6">
               <div>
-                <h3 className="font-semibold">Venda por unidade do cliente</h3>
+                <h3 className="font-semibold">{isAllClients ? 'Venda por cliente' : 'Venda por unidade do cliente'}</h3>
                 <p className="mt-1 text-xs text-[#71827b]">
-                  {isBusinessGroup
+                  {isAllClients ? 'clientes com movimento no período.' : isBusinessGroup
                     ? 'Composição oficial pelo campo Grupo Empresarial'
                     : isConnectedGroup
                       ? 'Composição por CNPJ-base, Grupo Empresarial e nome do grupo'
@@ -1128,13 +1175,13 @@ export default function Home() {
                       ? 'Composição pelo nome comercial do grupo'
                     : 'Composição do grupo empresarial pelo CNPJ-base'}{' '}
                   · {billedBranches.length}{' '}
-                  {isBusinessGroup || isNamedGroup || isConnectedGroup
+                  {isAllClients ? 'clientes com faturamento' : isBusinessGroup || isNamedGroup || isConnectedGroup
                     ? 'empresas com faturamento'
                     : 'unidades com faturamento'}
                 </p>
               </div>
               <span className="flex shrink-0 items-center gap-2 text-xs font-semibold text-[#312d5e]">
-                Ver unidades{' '}
+                {isAllClients ? 'Ver clientes' : 'Ver unidades'}{' '}
                 <ChevronDown className="size-4 transition-transform duration-200 group-open:rotate-180" />
               </span>
             </summary>
@@ -1143,7 +1190,7 @@ export default function Home() {
                 <TableHeader>
                   <TableRow className="bg-[#f7f9f8]">
                     <TableHead className="pl-6">Código</TableHead>
-                    <TableHead>Unidade / CNPJ</TableHead>
+                    <TableHead>{isAllClients ? 'Cliente / CNPJ' : 'Unidade / CNPJ'}</TableHead>
                     <TableHead className="text-right">Bruto</TableHead>
                     <TableHead className="text-right">Devoluções</TableHead>
                     <TableHead className="text-right">Líquido</TableHead>
@@ -1203,6 +1250,7 @@ export default function Home() {
                 <div className="flex items-center gap-2">
                   <Sparkles className="size-4 text-[#008ad0]" />
                   <h3 className="font-semibold">Inteligência comercial</h3>
+                  <a href="/carteira" className="ml-2 text-sm font-medium text-[#008ad0] underline underline-offset-4">Abrir carteira inteligente</a>
                 </div>
                 <p className="mt-1 text-xs text-[#71728a]">
                   Comparativo YoY · {data?.year ?? 2026} contra{' '}
@@ -1371,8 +1419,7 @@ export default function Home() {
             </div>
           </section>
           <p className="mt-5 text-center text-xs text-[#84938e]">
-            Dados consultados em tempo real no ERP_PROD · Conexão somente
-            leitura · Regras extraídas do modelo Power BI.
+            Desenvolvido por : Departamento de Tecnologia e Informação - DMB - data: {footerDate}
           </p>
             </>
           )}
@@ -1641,7 +1688,7 @@ function formatPeriod(period: ReportData['period'], fallbackYear: number) {
     new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short' })
       .format(value)
       .replace('.', '');
-  return `${dayMonth(start)} — ${dayMonth(end)} ${end.getFullYear()}`;
+  return `${dayMonth(start)}${start.getFullYear() !== end.getFullYear() ? ` ${start.getFullYear()}` : ''} — ${dayMonth(end)} ${end.getFullYear()}`;
 }
 function Metric({
   label,

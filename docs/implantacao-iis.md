@@ -77,3 +77,13 @@ Commit/push não publica automaticamente no servidor. Antes de uma atualização
 O Git guarda o código e esta documentação, não as configurações efetivas do Windows, certificados, chaves privadas, credenciais ou banco. Fazer backup desses elementos pelos procedimentos internos de TI. O certificado piloto expira em 21/03/2027 e sua renovação ainda não está automatizada.
 
 A API atual usa `ThreadingHTTPServer` atrás do IIS; logs persistentes, supervisão de travamentos e endurecimento do servidor HTTP continuam como melhorias pendentes. Reinício automático do servidor ainda deve ser validado em uma janela de manutenção; não foi necessário reiniciar para o teste de saída da sessão.
+
+
+## Publicação confirmada em 23/09/2026
+
+A captura enviada pelo usuário confirma SUCESSO às 07:15:20 da versão `20260922T191412465916Z` via `Publicar-Pulso.ps1 -Aplicar`, após validação e uso do atualizador corrigido para a Interface com WorkingDirectory vazio. Backup: `C:\Pulso\Atualizacoes\20260923-071412-b4970c44\backup`. Interface e API passaram pelas verificações automáticas. Conferência funcional das consultas pelo site de produção ainda pendente. Este registro substitui as observações anteriores de primeira execução/publicação pendente; a restauração foi testada somente em simulação.
+
+
+## Fluxo remoto validado em 23/09/2026
+
+O usuário confirmou o acesso pelo Verificar-Acesso-Producao.bat com uma conta autorizada (ambas as tarefas Running), executou Atualizar-Producao.bat e confirmou sucesso. Publicação completa a partir da máquina local validada pelo usuário, incluindo V.01.001 no cabeçalho. Este registro substitui os apontamentos anteriores de acesso/publicação remota pendentes. A senha continua sendo solicitada em cada execução, sem armazenamento.

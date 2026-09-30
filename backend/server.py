@@ -9,6 +9,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import pyodbc
+import usage
+from portfolio import PortfolioService
+from portfolio_actions import save_action, with_actions
 
 from queries import (
     BRANCH_SUMMARY,
@@ -55,6 +58,9 @@ def previous_year(value):
 def rows_as_dict(cursor):
     columns = [item[0] for item in cursor.description]
     return [{key: serialize(value) for key, value in zip(columns, row)} for row in cursor.fetchall()]
+
+
+portfolio_service = PortfolioService(connection, rows_as_dict)
 
 
 def find_clients(term):
@@ -187,10 +193,14 @@ def summary_rows(cursor, sql, client_ids, start, end):
 def report(client_ids, start, end, category=None, comparison_start=None, comparison_end=None):
     if isinstance(client_ids, int):
         client_ids = [client_ids]
-    placeholders = ','.join('?' for _ in client_ids)
+    all_clients = client_ids is None
+    placeholders = 'SELECT HANDLE FROM GN_PESSOAS' if all_clients else ','.join('?' for _ in client_ids)
+    client_ids = [] if client_ids is None else client_ids
     selected_filter = category_clause(category)
     summary_sql = SUMMARY.format(ids=placeholders, category_filter=selected_filter)
     branch_sql = BRANCH_SUMMARY.format(ids=placeholders, category_filter=selected_filter)
+    if placeholders == 'SELECT HANDLE FROM GN_PESSOAS':
+        branch_sql = branch_sql.replace('ORDER BY liquido', 'AND (F.PESSOA IS NOT NULL OR D.PESSOA IS NOT NULL) ORDER BY liquido')
     comparison_start = comparison_start or start
     comparison_end = comparison_end or end
     with connection() as conn:
@@ -201,7 +211,7 @@ def report(client_ids, start, end, category=None, comparison_start=None, compari
         ).fetchone()
         open_orders = serialize(open_orders_row[0])
         open_orders_count = int(open_orders_row[1])
-        open_order_items = rows_as_dict(cur.execute(
+        open_order_items = [] if all_clients else rows_as_dict(cur.execute(
             OPEN_ORDER_ITEMS.format(ids=placeholders), *client_ids,
         ))
         # Aggregate proposal headers once, without multiplying their totals by item count.
@@ -210,7 +220,7 @@ def report(client_ids, start, end, category=None, comparison_start=None, compari
         ).fetchone()
         open_proposals = serialize(open_proposals_row[0])
         open_proposals_count = int(open_proposals_row[1])
-        open_proposal_items = rows_as_dict(cur.execute(
+        open_proposal_items = [] if all_clients else rows_as_dict(cur.execute(
             OPEN_PROPOSAL_ITEMS.format(ids=placeholders), *client_ids,
         ))
         open_by_category = {}
@@ -293,7 +303,9 @@ def report(client_ids, start, end, category=None, comparison_start=None, compari
 
 
 def product_report(client_ids, start, end, category=None):
-    placeholders = ','.join('?' for _ in client_ids)
+    all_clients = client_ids is None
+    placeholders = 'SELECT HANDLE FROM GN_PESSOAS' if all_clients else ','.join('?' for _ in client_ids)
+    client_ids = [] if client_ids is None else client_ids
     sql = PRODUCT_SUMMARY.format(ids=placeholders, category_filter=category_clause(category))
     with connection() as conn:
         return rows_as_dict(conn.cursor().execute(sql, *client_ids, start, end))
@@ -308,6 +320,20 @@ MONTHS = {
 
 def period_from_question(question, year):
     normalized = plain_text(question)
+    relative_day = re.search(r'\b(hoje|ontem)\b', normalized)
+    if relative_day:
+        start = date.today() - timedelta(days=relative_day.group(1) == 'ontem')
+        return start, start + timedelta(days=1)
+    if re.search(r'\bmes\s+(?:passado|anterior)\b', normalized):
+        end = date.today().replace(day=1)
+        start = (end - timedelta(days=1)).replace(day=1)
+        return start, end
+    year_range = re.search(r'\b(20\d{2})\s+(?:a|ate)\s+(20\d{2})\b', normalized)
+    if year_range:
+        first, last = map(int, year_range.groups())
+        if last < first:
+            raise ValueError('O ano final deve ser maior ou igual ao ano inicial.')
+        return date(first, 1, 1), date(last + 1, 1, 1)
     month_names = '|'.join(MONTHS)
     match = re.search(
         rf'\b(?:de\s+)?({month_names})\s+(?:a|ate)\s+({month_names})\s+(?:de\s+)?20\d{{2}}\b',
@@ -340,19 +366,22 @@ def period_from_question(question, year):
 
 
 def interpret(question):
+    question = re.sub(r'\bhj\b', 'hoje', question, flags=re.I)
     year_match = re.search(r'\b(20\d{2})\b', question)
     if year_match:
         year = int(year_match.group(1))
-    elif re.search(r'\bano\s+passado\b', question, re.I):
+    elif re.search(r'\bano\s+(?:passado|anterior)\b', question, re.I):
         year = date.today().year - 1
     else:
         year = date.today().year
     month_names = r'janeiro|fevereiro|mar[cç]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro'
-    relative_year = r'(?:este|neste|esse|nesse)\s+ano|(?:no\s+)?ano\s+atual|(?:no\s+)?ano\s+passado'
-    relative_month = r'(?:este|esse|neste|nesse)\s+m[eê]s|(?:no\s+)?m[eê]s\s+atual'
+    relative_year = r'(?:este|neste|esse|nesse)\s+ano|(?:no\s+)?ano\s+(?:atual|passado|anterior)'
+    relative_month = r'(?:este|esse|neste|nesse)\s+m[eê]s|(?:no\s+)?m[eê]s\s+(?:atual|passado|anterior)'
+    relative_month += r'|(?:(?:no\s+)?dia\s+de\s+|de\s+)?(?:hoje|ontem)'
     single_month = rf'(?:{month_names})\s+(?:(?:de\s+)?20\d{{2}}|(?:deste|desse|neste|nesse)\s+ano|do\s+ano\s+(?:atual|passado))'
     numeric_month = r'(?:0?[1-9]|1[0-2])\s*(?:/|de)\s*20\d{2}'
-    period_boundary = rf'(?=\s+(?:(?:{relative_year})|(?:{relative_month})|(?:{single_month})|(?:{numeric_month})|(?:de\s+)?(?:{month_names})\s+(?:a|at[eé])\s+(?:{month_names})\s+(?:de\s+)?20\d{{2}}|(?:(?:no\s+)?per[ií]odo\s+de\s+|no\s+|em\s+|entre\s+)?20\d{{2}})\b|$)'
+    period_only = rf'(?:{relative_year}|{relative_month}|{single_month}|{numeric_month}|(?:de\s+)?(?:{month_names})\s+(?:a|at[eé])\s+(?:{month_names})\s+(?:de\s+)?20\d{{2}}|(?:de\s+|em\s+)?20\d{{2}}\s+(?:a|at[eé])\s+20\d{{2}})'
+    period_boundary = rf'(?=\s+(?:(?:{relative_year})|(?:{relative_month})|(?:{single_month})|(?:{numeric_month})|(?:de\s+)?(?:{month_names})\s+(?:a|at[eé])\s+(?:{month_names})\s+(?:de\s+)?20\d{{2}}|(?:(?:no\s+)?per[ií]odo\s+de\s+|de\s+|no\s+|em\s+|entre\s+)?20\d{{2}})\b|$)'
     client = None
     for pattern in (
         rf'\bcliente\s+(.+?){period_boundary}',
@@ -374,12 +403,18 @@ def interpret(question):
     if re.search(r'\bpe[cç]as?\b', normalized): category = 'pecas'
     elif re.search(r'\bimplementos?\b', normalized): category = 'implementos'
     elif re.search(r'\bservi[cç]os?\b', normalized): category = 'servicos'
+    if re.search(rf'^\s*(?:faturamento|vendas?|acumulado)(?:\s+(?:geral|total|de todos os clientes|todos os clientes))?{period_boundary}', question, re.I):
+        client = ''
+    if re.fullmatch(period_only, question.strip().rstrip(' .?!'), re.I):
+        client = ''
     start, end = period_from_question(question, year)
+    if re.search(r'\b(?:hoje|ontem|m[eê]s\s+(?:passado|anterior))\b', question, re.I):
+        year = start.year
     return client, year, category, start, end
 
 
 def request_identity(headers, peer, trust_iis=False):
-    # Display only. IIS remains responsible for authentication/authorization.
+    # Trusted IIS identity. IIS MUST authenticate and overwrite the header.
     # Enable only behind IIS, which MUST overwrite this header from LOGON_USER.
     unknown = {'authenticated': False, 'login': None, 'name': None, 'initials': None}
     if not trust_iis or peer not in ('127.0.0.1', '::1'):
@@ -399,7 +434,20 @@ def request_identity(headers, peer, trust_iis=False):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def identity(self):
+        return request_identity(self.headers, self.client_address[0], getattr(self.server, 'trust_iis_identity', False))
+
+    def usage_identity(self):
+        return usage.signed_identity(self.headers.get('Cookie', ''), self.client_address[0])
+
     def send_json(self, status, payload):
+        try:
+            identity = self.usage_identity()
+            if identity['authenticated']:
+                parsed_usage = urlparse(self.path)
+                usage.record_query(identity['login'], parsed_usage.path, status, parse_qs(parsed_usage.query).get('kind', [None])[0])
+        except Exception as exc:
+            print(f'[usage] Registro indisponível: {type(exc).__name__}')
         body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
         self.send_response(status)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -421,11 +469,23 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
         try:
+            if parsed.path == '/api/admin/usage':
+                if not usage.can_manage(self.usage_identity()):
+                    return self.send_json(403, {'error': 'Acesso restrito à gestão autorizada.'})
+                try:
+                    return self.send_json(200, usage.report(params))
+                except ValueError as exc:
+                    return self.send_json(400, {'error': str(exc)})
+                except Exception:
+                    return self.send_json(503, {'error': 'Histórico indisponível. Verifique o armazenamento de uso no servidor.'})
+            if parsed.path == '/api/portfolio':
+                snapshot, error, refreshing = portfolio_service.get()
+                if snapshot is None:
+                    return self.send_json(503 if error else 202, {'loading': not bool(error), 'error': error})
+                return self.send_json(200, {**with_actions(snapshot), 'refreshing': refreshing, 'error': error})
             if parsed.path == '/api/me':
-                return self.send_json(200, request_identity(
-                    self.headers, self.client_address[0],
-                    getattr(self.server, 'trust_iis_identity', False),
-                ))
+                identity = self.identity()
+                return self.send_json(200, {**identity, 'canManageUsage': usage.can_manage(self.usage_identity())})
             if parsed.path == '/api/health':
                 with connection() as conn:
                     db = conn.cursor().execute('SELECT DB_NAME()').fetchval()
@@ -436,8 +496,16 @@ class Handler(BaseHTTPRequestHandler):
                 ids = [int(value) for value in params['clientId'][0].split(',')]
                 data = report(ids, date.fromisoformat(params['start'][0]), date.fromisoformat(params['end'][0]))
                 return self.send_json(200, data)
+            if parsed.path == '/api/open-items':
+                kind = params.get('kind', [''])[0]
+                if kind not in ('orders', 'proposals'):
+                    return self.send_json(400, {'error': 'Tipo inválido.'})
+                sql = OPEN_ORDER_ITEMS if kind == 'orders' else OPEN_PROPOSAL_ITEMS
+                with connection() as conn:
+                    items = rows_as_dict(conn.cursor().execute(sql.format(ids='SELECT HANDLE FROM GN_PESSOAS')))
+                return self.send_json(200, {'items': items})
             if parsed.path == '/api/products':
-                ids = [int(value) for value in params['clientId'][0].split(',')]
+                ids = None if params.get('scope') == ['all'] else [int(value) for value in params['clientId'][0].split(',')]
                 category = params.get('category', [None])[0] or None
                 products = product_report(
                     ids,
@@ -451,12 +519,48 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(500, {'error': str(exc)})
 
     def do_POST(self):
+        if urlparse(self.path).path == '/api/usage/heartbeat':
+            identity = self.usage_identity()
+            if not identity['authenticated']:
+                return self.send_json(401, {'error': 'Autenticação Windows necessária.'})
+            try:
+                size = int(self.headers.get('Content-Length', '0'))
+                if not 0 < size <= 2048 or self.headers.get('Content-Type', '').split(';')[0].strip().lower() != 'application/json':
+                    raise ValueError('Presença inválida.')
+                usage.heartbeat(identity['login'], json.loads(self.rfile.read(size)))
+                return self.send_json(200, {'ok': True})
+            except (ValueError, TypeError, AttributeError):
+                return self.send_json(400, {'error': 'Presença inválida.'})
+            except Exception:
+                return self.send_json(503, {'error': 'Registro de presença indisponível.'})
+        if urlparse(self.path).path == '/api/portfolio/actions':
+            try:
+                if self.headers.get('Content-Type', '').split(';')[0].strip().lower() != 'application/json':
+                    return self.send_json(415, {'error': 'Envie a ação como JSON.'})
+                size = int(self.headers.get('Content-Length', '0'))
+                if size <= 0 or size > 12000:
+                    return self.send_json(400, {'error': 'Tamanho de ação inválido.'})
+                payload = json.loads(self.rfile.read(size))
+                if not isinstance(payload, dict):
+                    raise ValueError('Informe os dados da ação.')
+                snapshot, _, _ = portfolio_service.get()
+                group = next((g for g in (snapshot or {}).get('groups', []) if g['id'] == str(payload.get('groupId'))), None)
+                if group is None:
+                    return self.send_json(404, {'error': 'Grupo não encontrado na análise atual.'})
+                return self.send_json(200, {'action': save_action(payload, group)})
+            except (ValueError, TypeError):
+                return self.send_json(400, {'error': 'Confira responsável, motivo, próxima ação e data (de hoje até um ano).'} )
+            except Exception as exc:
+                print(f'[portfolio] Save failed: {exc}')
+                return self.send_json(500, {'error': 'Não foi possível salvar a ação. Tente novamente.'})
         if urlparse(self.path).path != '/api/ask':
             return self.send_json(404, {'error': 'Rota não encontrada'})
         try:
             size = int(self.headers.get('Content-Length', '0'))
             payload = json.loads(self.rfile.read(size) or b'{}')
             question = str(payload.get('question', ''))[:500]
+            if not question.strip() and not payload.get('clientTerm') and not payload.get('groupName') and not (payload.get('start') and payload.get('end')):
+                return self.send_json(400, {'error': 'Informe uma consulta, por exemplo: faturamento hoje.'})
             client_term, year, category, start_date, end_date = interpret(question)
             direct_client = str(payload.get('clientTerm', '')).strip()[:150]
             group_name = str(payload.get('groupName', '')).strip()[:60]
@@ -469,61 +573,70 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(400, {'error': 'A data final deve ser igual ou posterior à data inicial.'})
                 end_date = end_inclusive + timedelta(days=1)
                 year = start_date.year
+            if 'clientTerm' in payload or 'groupName' in payload:
+                client_term = group_name or direct_client
             code_match = re.fullmatch(r'(?:c[oó]digo\s+)?(\d+)', client_term.strip(), re.I)
-            alias_clients = find_group_alias(client_term) if group_name else ([] if code_match else find_group_alias(client_term))
+            alias_clients = find_group_alias(client_term) if client_term and not code_match else []
             grouping = 'cnpj'
             matrix_code = None
-            if code_match:
-                matrix_code = int(code_match.group(1))
-                clients = find_business_group(matrix_code)
+            if not client_term:
+                grouping = 'all'
                 understood_as = None
-                grouping = 'grupoempresarial'
-            elif alias_clients:
-                clients = alias_clients
-                understood_as = None
-                grouping = 'connected_group'
+                client = {'nome': 'Todos os clientes', 'branchCount': 0, 'ids': []}
             else:
-                clients, understood_as = resolve_spoken_client(client_term)
-            if not clients:
-                return self.send_json(404, {'error': f'Cliente “{client_term}” não encontrado.'})
-            if grouping == 'cnpj':
-                resolved_groups = connected_client_groups(clients)
-                if len(resolved_groups) > 1:
-                    choices = [
-                        {'root': re.sub(r'\D', '', str(items[0].get('documento') or ''))[:8],
-                         'count': len(items), 'name': items[0]['nome'], 'clients': items}
-                        for items in resolved_groups
-                    ]
-                    return self.send_json(409, {
-                        'error': 'Foram encontrados grupos sem vínculo cadastral entre si. Informe o código ou CNPJ do cliente desejado.',
-                        'needsSelection': True, 'groups': choices, 'year': year,
-                    })
-            primary_client = clients[0]
-            connected_clients = find_connected_clients([item['id'] for item in clients])
-            if connected_clients:
-                clients = connected_clients
-                grouping = 'connected_group'
-            client = primary_client
-            if not client.get('groupName'):
-                client['groupName'] = next(
-                    (item.get('groupName') for item in clients if item.get('groupName')),
-                    None,
-                )
-            client['branchCount'] = len(clients)
-            client['ids'] = [item['id'] for item in clients]
+                if code_match:
+                    matrix_code = int(code_match.group(1))
+                    clients = find_business_group(matrix_code)
+                    understood_as = None
+                    grouping = 'grupoempresarial'
+                elif alias_clients:
+                    clients = alias_clients
+                    understood_as = None
+                    grouping = 'connected_group'
+                else:
+                    clients, understood_as = resolve_spoken_client(client_term)
+                if not clients:
+                    return self.send_json(404, {'error': f'Cliente “{client_term}” não encontrado.'})
+                if grouping == 'cnpj':
+                    resolved_groups = connected_client_groups(clients)
+                    if len(resolved_groups) > 1:
+                        choices = [
+                            {'root': re.sub(r'\D', '', str(items[0].get('documento') or ''))[:8],
+                             'count': len(items), 'name': items[0]['nome'], 'clients': items}
+                            for items in resolved_groups
+                        ]
+                        return self.send_json(409, {
+                            'error': 'Foram encontrados grupos sem vínculo cadastral entre si. Informe o código ou CNPJ do cliente desejado.',
+                            'needsSelection': True, 'groups': choices, 'year': year,
+                        })
+                primary_client = clients[0]
+                connected_clients = find_connected_clients([item['id'] for item in clients])
+                if connected_clients:
+                    clients = connected_clients
+                    grouping = 'connected_group'
+                client = primary_client
+                if not client.get('groupName'):
+                    client['groupName'] = next(
+                        (item.get('groupName') for item in clients if item.get('groupName')),
+                        None,
+                    )
+                client['branchCount'] = len(clients)
+                client['ids'] = [item['id'] for item in clients]
             if year == date.today().year:
                 end_date = min(end_date, date.today() + timedelta(days=1))
             comparison_start = previous_year(start_date)
             comparison_end = previous_year(end_date)
             data = report(
-                client['ids'], start_date, end_date, category,
+                None if grouping == 'all' else client['ids'], start_date, end_date, category,
                 comparison_start, comparison_end,
             )
+            if grouping == 'all':
+                client['branchCount'] = len(data['branches'])
             return self.send_json(200, {
                 'client': client, 'year': year, 'category': category,
                 'period': {'start': start_date.isoformat(), 'end': end_date.isoformat()},
                 'understoodAs': understood_as, 'grouping': grouping,
-                'groupLinks': ['cnpj', 'grupoempresarial', 'k_nomegrupo'],
+                'groupLinks': [] if grouping == 'all' else ['cnpj', 'grupoempresarial', 'k_nomegrupo'],
                 'matrixCode': matrix_code, **data,
             })
         except Exception as exc:
@@ -546,4 +659,5 @@ if __name__ == '__main__':
         print(f'Pulso Comercial API em http://localhost:{args.port}')
         server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
         server.trust_iis_identity = args.trust_iis_identity
+        portfolio_service.start()
         server.serve_forever()

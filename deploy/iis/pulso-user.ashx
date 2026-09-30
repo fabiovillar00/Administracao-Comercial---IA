@@ -3,6 +3,9 @@
 using System;
 using System.Web;
 using System.Text.RegularExpressions;
+using System.IO;
+using System.Text;
+using System.Security.Cryptography;
 
 public class PulsoUserHandler : IHttpHandler
 {
@@ -29,6 +32,26 @@ public class PulsoUserHandler : IHttpHandler
         }
 
         string login = identity.Name;
+        bool usageReady = false;
+        // The signing key lives outside the web root, provisioned by an administrator.
+        try {
+            string root = Directory.GetParent(context.Server.MapPath("~/").TrimEnd('\\', '/')).FullName;
+            byte[] key = File.ReadAllBytes(Path.Combine(root, "Config", "Usage", "identity.key"));
+            if (key.Length == 32 && context.Request.IsSecureConnection) {
+                long expires = (long)(DateTime.UtcNow.AddMinutes(5) - new DateTime(1970, 1, 1)).TotalSeconds;
+                string message = "v1." + B64(Encoding.UTF8.GetBytes(login)) + "." + expires;
+                using (var mac = new HMACSHA256(key)) {
+                    var cookie = new HttpCookie("PulsoUsageIdentity", message + "." + B64(mac.ComputeHash(Encoding.ASCII.GetBytes(message))));
+                    cookie.HttpOnly = true;
+                    cookie.Secure = true;
+                    cookie.Path = "/";
+                    cookie.SameSite = SameSiteMode.Strict;
+                    cookie.Expires = DateTime.UtcNow.AddMinutes(5);
+                    context.Response.Cookies.Add(cookie);
+                    usageReady = true;
+                }
+            }
+        } catch (IOException) { } catch (UnauthorizedAccessException) { }
         string name = login.Substring(login.LastIndexOf('\\') + 1).Split('@')[0];
         string[] parts = Regex.Split(name, @"[.\s_-]+");
         parts = Array.FindAll(parts, part => part.Length > 0);
@@ -36,11 +59,17 @@ public class PulsoUserHandler : IHttpHandler
             ? parts[0].Substring(0, 1) + parts[parts.Length - 1].Substring(0, 1)
             : name.Substring(0, Math.Min(2, name.Length));
         context.Response.Write("{\"authenticated\":true,\"login\":" + Quote(login) +
-            ",\"name\":" + Quote(name) + ",\"initials\":" + Quote(initials.ToUpperInvariant()) + "}");
+            ",\"name\":" + Quote(name) + ",\"initials\":" + Quote(initials.ToUpperInvariant()) +
+            ",\"usageReady\":" + (usageReady ? "true" : "false") +
+            ",\"canManageUsage\":" + (usageReady && String.Equals(login, @"DMB\fabio.andrade", StringComparison.OrdinalIgnoreCase) ? "true" : "false") + "}");
     }
 
     private static string Quote(string value)
     {
         return HttpUtility.JavaScriptStringEncode(value, true);
+    }
+
+    private static string B64(byte[] value) {
+        return Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
     }
 }
