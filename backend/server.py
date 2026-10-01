@@ -17,6 +17,7 @@ from queries import (
     BRANCH_SUMMARY,
     DETAILS,
     PRODUCT_SUMMARY,
+    PRODUCT_CLIENT_DETAILS,
     OPEN_ORDERS,
     OPEN_ORDER_ITEMS,
     OPEN_PROPOSAL_ITEMS,
@@ -308,7 +309,23 @@ def product_report(client_ids, start, end, category=None):
     client_ids = [] if client_ids is None else client_ids
     sql = PRODUCT_SUMMARY.format(ids=placeholders, category_filter=category_clause(category))
     with connection() as conn:
-        return rows_as_dict(conn.cursor().execute(sql, *client_ids, start, end))
+        products = rows_as_dict(conn.cursor().execute(sql, *client_ids, start, end))
+        if not products:
+            return products
+        codes = list(dict.fromkeys(item['codigoProduto'] for item in products))
+        details_sql = PRODUCT_CLIENT_DETAILS.format(
+            ids=placeholders, category_filter=category_clause(category),
+            product_codes=','.join('?' for _ in codes),
+        )
+        customers = rows_as_dict(conn.cursor().execute(details_sql, *client_ids, start, end, *codes))
+        by_product = {}
+        for customer in customers:
+            key = tuple(customer.pop(field) for field in ('codigoProduto', 'produto', 'familia'))
+            by_product.setdefault(key, []).append(customer)
+        for product in products:
+            key = tuple(product[field] for field in ('codigoProduto', 'produto', 'familia'))
+            product['clientesDetalhes'] = by_product.get(key, [])
+        return products
 
 
 MONTHS = {
@@ -624,8 +641,8 @@ class Handler(BaseHTTPRequestHandler):
                 client['ids'] = [item['id'] for item in clients]
             if year == date.today().year:
                 end_date = min(end_date, date.today() + timedelta(days=1))
-            comparison_start = previous_year(start_date)
-            comparison_end = previous_year(end_date)
+            comparison_start = date(year - 1, 1, 1)
+            comparison_end = date(year, 1, 1)
             data = report(
                 None if grouping == 'all' else client['ids'], start_date, end_date, category,
                 comparison_start, comparison_end,

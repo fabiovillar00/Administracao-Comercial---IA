@@ -1,12 +1,21 @@
 import io
 import json
 import unittest
+from datetime import date
 from unittest.mock import Mock, patch
 
 from server import Handler
 
 
 class GeneralScopeTests(unittest.TestCase):
+    @patch('server.report', return_value={'branches': []})
+    def test_comparison_always_uses_full_previous_year(self, report):
+        for question in ('faturamento 2026', 'faturamento setembro 2026'):
+            with self.subTest(question=question):
+                status, result = self.ask({'question': question})
+                self.assertEqual(status, 200)
+                self.assertEqual(report.call_args.args[4:6], (date(2025, 1, 1), date(2026, 1, 1)))
+
     def ask(self, payload):
         body = json.dumps(payload).encode()
         handler = Handler.__new__(Handler)

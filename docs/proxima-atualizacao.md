@@ -1,12 +1,40 @@
 # Próxima atualização de produção
 
-## Versão da próxima publicação — V.01.002
+## Publicado — V.01.005: famílias, quantidades e comparação anual
 
-Preparada em `lib/app-version.ts`. Inclui a ocultação de Clientes e Relatórios. A publicação de 29/09/2026 manteve V.01.001; não alterar retroativamente seus pacotes. A cada nova atualização publicada, incrementar a versão visual: V.01.002, V.01.003, V.01.004 e assim por diante. Recompilar ou tentar publicar novamente a mesma atualização não incrementa a versão. Registrar a publicação confirmada e preparar a próxima versão antes do próximo build. A versão visual também fica registrada no manifesto do pacote e no resultado do empacotamento.
+Usuário validou e autorizou publicar os ajustes de quantidades e seleção de família e o comparativo com ano anterior completo. Publicação concluída em 01/10/2026 às 16:35:07, com interface e API verificadas pelo atualizador. Pacote `20261001T193205879424Z`; log `outputs/publicacao-20261001-163108-4b1677f7.log`; backup `C:\Pulso\Atualizacoes\20261001-163340-3c6515b6\backup`.
 
-## Pendente — ocultar Clientes e Relatórios do menu
+## Incluído na V.01.005 — quantidades e seleção de família nos produtos
 
-Solicitado em 29/09/2026: remover temporariamente os dois itens do menu lateral enquanto seu escopo não está definido. Implementado em `app/page.tsx`. Incluir no próximo pacote; ainda não publicado. A Carteira inteligente continua excluída da atualização.
+Gráfico exibe percentual de faturamento e quantidade vendida junto às barras. Os cartões de quantidade e valor e o resumo da listagem seguem a família e a busca selecionadas. O resumo utiliza soma das quantidades, também na impressão. Percentuais do gráfico continuam relativos à categoria para manter a comparação entre famílias.
+
+## Incluído na V.01.005 — comparação com ano anterior completo
+
+Em 01/10/2026, a pedido do usuário, o comparativo passa a consultar sempre 01/01 a 31/12 do ano anterior, inclusive quando o período atual é parcial. Cartões e textos explicitam “ano completo” e “período selecionado”. Validado com testes da API e TypeScript.
+
+## Publicado — V.01.004: cartão de quantidade vendida
+
+Em 01/10/2026, alterado o cartão da análise de produtos para somar `quantidade` dos produtos da categoria selecionada, em vez de contar códigos distintos. Título: “Quantidade vendida”. Validado localmente: setembro/2026, Implementos, 31 unidades em vez de 15 códigos distintos. Publicação autorizada pelo usuário e concluída às 15:49:13, com interface e API verificadas pelo atualizador. Pacote `20261001T184614803091Z`; log `outputs/publicacao-20261001-154518-7c58600e.log`; backup `C:\Pulso\Atualizacoes\20261001-154744-5712d4d4\backup`.
+
+## Publicado — V.01.003: impressão e clientes por produto
+
+Publicação confirmada pelo log `outputs/publicacao-20261001-101430-c03f7bb3.log`, com sucesso em 01/10/2026 às 10:18. Pacote `20261001T131519286800Z`; backup remoto `C:\Pulso\Atualizacoes\20261001-101700-ae8e93f6\backup`. Interface e API verificadas pelo atualizador. Este registro substitui os apontamentos pendentes abaixo sobre impressão e detalhamento de clientes.
+
+## Pendente — clientes por produto
+
+Incluído controle opcional “Expandir clientes de todos” / “Recolher clientes de todos” na listagem de produtos. Exibe abaixo de cada produto código do cliente, nome, CNPJ e quantidade, com o mesmo período, clientes e categoria do faturamento. O detalhamento é consultado em lote para os produtos retornados, sem consultas individuais por produto. A impressão acompanha a expansão atual. Alteração ainda não publicada.
+
+## Pendente — impressão dos produtos do faturamento
+
+Em 01/10/2026, usuário confirmou funcionamento da publicação anterior e solicitou impressão na tela de produtos. Incluído botão Imprimir / Salvar PDF, com cabeçalho DMB, data/hora, usuário e A4 retrato. Respeita a expansão da listagem: aberta inclui todos os produtos do filtro atual; fechada imprime o resumo. Tabela permite múltiplas páginas com cabeçalho repetido. Alteração ainda não publicada.
+
+## Versão da próxima publicação — V.01.003
+
+Preparada em 01/10/2026 para a impressão dos produtos do faturamento e expansão dos clientes por produto, ambas validadas localmente pelo usuário. Usuário autorizou a publicação após confirmar o detalhamento funcionando. Publicação pendente. Rebuilds e novas tentativas mantêm esta versão.
+
+## Publicado — V.01.002: impressão da Análise de Faturamento
+
+Usuário confirmou em 01/10/2026 que a atualização funcionou em produção. Inclui Imprimir / Salvar PDF, A4 retrato, logo DMB, data/hora e login do IIS no cabeçalho, além da ocultação de Clientes e Relatórios. Carteira inteligente permanece excluída do pacote.
 
 ## Publicado — Uso da plataforma, exclusivo de DMB\fabio.andrade
 

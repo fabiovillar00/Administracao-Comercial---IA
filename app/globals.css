@@ -133,3 +133,102 @@ body {
     @apply font-sans;
   }
 }
+
+/* Print the current revenue analysis, including expanded client details. */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+
+  :is([data-usage-view='overview'], [data-usage-view='products']) {
+    background: white !important;
+    color: #24233d;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  :is([data-usage-view='overview'], [data-usage-view='products']) > aside,
+  :is([data-usage-view='overview'], [data-usage-view='products']) .revenue-screen-only,
+  :is([data-usage-view='overview'], [data-usage-view='products']) button:not([aria-pressed]):not([data-slot='hover-card-trigger']),
+  :is([data-usage-view='overview'], [data-usage-view='products']) a:not([data-slot='hover-card-trigger']),
+  body:has(:is([data-usage-view='overview'], [data-usage-view='products'])) [data-slot='hover-card-content'],
+  :is([data-usage-view='overview'], [data-usage-view='products']) .recharts-tooltip-wrapper,
+  :is([data-usage-view='overview'], [data-usage-view='products']) details:not([open]) {
+    display: none !important;
+  }
+
+  :is([data-usage-view='overview'], [data-usage-view='products']) .revenue-print-only {
+    display: block !important;
+  }
+
+  :is([data-usage-view='overview'], [data-usage-view='products']) > section {
+    margin: 0 !important;
+    min-height: auto;
+  }
+
+  :is([data-usage-view='overview'], [data-usage-view='products']) header {
+    flex-wrap: wrap;
+    break-inside: avoid;
+    height: auto;
+    padding: 0 0 12px;
+    background: white;
+    backdrop-filter: none;
+  }
+
+  :is([data-usage-view='overview'], [data-usage-view='products']) > section > div {
+    max-width: none;
+    padding: 16px 0 0;
+  }
+
+  :is([data-usage-view='overview'], [data-usage-view='products']) section section,
+  :is([data-usage-view='overview'], [data-usage-view='products']) tr,
+  :is([data-usage-view='overview'], [data-usage-view='products']) [data-slot='chart'] {
+    break-inside: avoid;
+  }
+
+  :is([data-usage-view='overview'], [data-usage-view='products']) details,
+  :is([data-usage-view='overview'], [data-usage-view='products']) [data-slot='table-container'] {
+    overflow: visible;
+  }
+
+  :is([data-usage-view='overview'], [data-usage-view='products']) thead {
+    display: table-header-group;
+  }
+
+  :is([data-usage-view='overview'], [data-usage-view='products']) td,
+  :is([data-usage-view='overview'], [data-usage-view='products']) th,
+  :is([data-usage-view='overview'], [data-usage-view='products']) .truncate {
+    white-space: normal;
+    overflow: visible;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media print {
+  [data-usage-view='products'] .products-report {
+    break-inside: auto;
+  }
+
+  [data-usage-view='products'] .products-report > div:not(.products-list) {
+    break-inside: avoid;
+  }
+
+  [data-usage-view='products'] .products-list {
+    overflow: visible;
+  }
+
+  [data-usage-view='products'] .products-list th,
+  [data-usage-view='products'] .products-list td {
+    padding: 6px;
+    font-size: 10px;
+  }
+
+  [data-usage-view='products'] .products-list table {
+    table-layout: fixed;
+  }
+
+  [data-usage-view='products'] .products-list th:first-child {
+    width: 30%;
+  }
+}

@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { revenueEvolution } from '@/lib/revenue-evolution';
 import { APP_VERSION } from '@/lib/app-version';
 import { UsageAdminLink } from '@/components/usage-tracker';
 import {
-  ArrowDownToLine,
+  Printer,
   ArrowUpRight,
   Bot,
   CalendarDays,
@@ -102,6 +103,13 @@ type ReportData = {
     faturamento: number;
     documentos: number;
     clientes: number;
+    clientesDetalhes?: Array<{
+      id: number;
+      codigo: string;
+      nome: string;
+      documento: string;
+      quantidade: number;
+    }>;
     ultimaVenda: string;
   }>;
   branches: Array<{
@@ -214,6 +222,14 @@ export default function Home() {
     };
   }, []);
   const [currentUser, setCurrentUser] = useState<{ login: string; name: string; initials: string } | null>(null);
+  const [printedAt, setPrintedAt] = useState<string>('');
+  useEffect(() => {
+    const preparePrint = () => {
+      flushSync(() => setPrintedAt(new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })));
+    };
+    window.addEventListener('beforeprint', preparePrint);
+    return () => window.removeEventListener('beforeprint', preparePrint);
+  }, []);
   useEffect(() => {
     const controller = new AbortController();
     fetch('/api/me', { cache: 'no-store', signal: controller.signal })
@@ -631,7 +647,7 @@ export default function Home() {
               {activeView === 'products' ? 'Análise de Faturamento / Produtos' : activeView.startsWith('order') ? (activeView === 'order-products' ? 'Pedidos / Produtos' : 'Pedidos em aberto') : activeView.startsWith('proposal') ? (activeView === 'proposal-products' ? 'Propostas / Produtos' : 'Propostas em aberto') : 'Análise de Faturamento'}
             </h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="revenue-screen-only flex items-center gap-2">
             <Button
               variant="outline"
               className="h-9 rounded-full border-[#d9daea] px-3 text-[#312d5e]"
@@ -643,9 +659,25 @@ export default function Home() {
               {currentUser?.initials ?? <Users className="size-4" aria-hidden="true" />}
             </div>
           </div>
+            <div className="revenue-print-only hidden w-full pt-3 text-xs text-[#71728a]">
+              <div className="flex break-inside-avoid items-center gap-5">
+                <img
+                  src="/logo-dmb.jpg"
+                  alt="DMB"
+                  width={140}
+                  height={60}
+                  loading="eager"
+                  className="h-auto w-[140px] shrink-0 object-contain"
+                />
+                <div className="min-w-0 font-semibold text-[#312d5e]">
+                  <p>Impresso em: {printedAt} (Brasília)</p>
+                  <p className="mt-1 break-words">Usuário: {currentUser?.login ?? 'Não identificado (sem autenticação Windows)'}</p>
+                </div>
+              </div>
+            </div>
         </header>
         <div className="mx-auto w-full max-w-[1400px] px-5 py-7 md:px-8">
-          <div className="mb-7 flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
+          <div className="revenue-screen-only mb-7 flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
             <div>
               <p className="mb-1 text-sm text-[#686980]">{currentUser ? `Olá, ${currentUser.name}.` : 'Olá!'}</p>
               <h2 className="text-2xl font-semibold tracking-[-.035em] md:text-[30px]">
@@ -666,7 +698,7 @@ export default function Home() {
               </Button>
             </div>
           </div>
-          <div className="mb-7 rounded-[22px] border border-[#d9dbea] bg-white p-2 shadow-[0_12px_40px_rgba(49,45,94,.08)]">
+          <div className="revenue-screen-only mb-7 rounded-[22px] border border-[#d9dbea] bg-white p-2 shadow-[0_12px_40px_rgba(49,45,94,.08)]">
             <div className="flex items-center gap-2 rounded-2xl bg-[#f7f8fc] px-4 py-3">
               <Search className="size-5 shrink-0 text-[#74758f]" />
               <input
@@ -732,7 +764,7 @@ export default function Home() {
           {activeView === 'products' && (
             <ProductsView
               data={data}
-              loading={productsLoading}
+              loading={productsLoading || loading}
               answer={answer}
               periodLabel={periodLabel}
               onBack={() => setActiveView('overview')}
@@ -797,7 +829,7 @@ export default function Home() {
                 )}
               </div>
             </div>
-            <div className="flex gap-2">
+            <div className="revenue-screen-only flex flex-wrap gap-2">
               <Button
                 variant="outline"
                 className="rounded-lg border-[#d8d9e7] bg-white"
@@ -808,14 +840,22 @@ export default function Home() {
               <Button
                 variant="outline"
                 className="rounded-lg border-[#d8d9e7] bg-white"
+                disabled={loading}
+                onClick={() => window.print()}
+                title="Abra a impressão e escolha uma impressora ou Salvar como PDF"
               >
-                <ArrowDownToLine /> Exportar
+                <Printer /> Imprimir / Salvar PDF
               </Button>
             </div>
+            <p className="revenue-print-only hidden w-full text-xs text-[#71728a]">
+              Pulso Comercial · Consulta concluída em {updatedAt?.toLocaleString('pt-BR') ?? '—'}
+              {' · '}Categoria dos gráficos e da posição em aberto: {chartCategoryLabel}.
+              {' '}A listagem de clientes/unidades é incluída quando expandida na tela.
+            </p>
           </div>
           )}
           {filtersOpen && (
-            <section className="mb-4 grid gap-3 rounded-[18px] border border-[#d9dbea] bg-white p-4 shadow-[0_10px_30px_rgba(49,45,94,.06)] md:grid-cols-2 xl:grid-cols-[1.4fr_1.1fr_.75fr_.75fr_auto] xl:items-end">
+            <section className="revenue-screen-only mb-4 grid gap-3 rounded-[18px] border border-[#d9dbea] bg-white p-4 shadow-[0_10px_30px_rgba(49,45,94,.06)] md:grid-cols-2 xl:grid-cols-[1.4fr_1.1fr_.75fr_.75fr_auto] xl:items-end">
               <div className="relative grid gap-1.5 text-xs font-semibold text-[#56576f]">
                 <span>Cliente</span>
                 <input
@@ -1253,8 +1293,8 @@ export default function Home() {
                   <a href="/carteira" className="ml-2 text-sm font-medium text-[#008ad0] underline underline-offset-4">Abrir carteira inteligente</a>
                 </div>
                 <p className="mt-1 text-xs text-[#71728a]">
-                  Comparativo YoY · {data?.year ?? 2026} contra{' '}
-                  {(data?.year ?? 2026) - 1} no mesmo período ·{' '}
+                  Período selecionado de {data?.year ?? 2026} contra{' '}
+                  {(data?.year ?? 2026) - 1} completo (01/01 a 31/12) ·{' '}
                   {chartCategoryLabel}
                 </p>
               </div>
@@ -1263,18 +1303,18 @@ export default function Home() {
               >
                 {yoyRate === null
                   ? 'Sem base comparativa'
-                  : `${yoyDelta >= 0 ? '+' : ''}${pct(yoyRate)} YoY`}
+                  : `${yoyDelta >= 0 ? '+' : ''}${pct(yoyRate)} vs. ano anterior completo`}
               </div>
             </div>
             <div className="grid xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,.75fr)]">
               <div className="border-b border-[#e2e3ec] p-5 xl:border-b-0 xl:border-r md:p-6">
                 <div className="mb-5 grid gap-3 sm:grid-cols-3">
                   <InsightMetric
-                    label={`${data?.year ?? 2026}`}
+                    label={`${data?.year ?? 2026} · período selecionado`}
                     value={brl(intelligenceCurrentNet)}
                   />
                   <InsightMetric
-                    label={`${(data?.year ?? 2026) - 1}`}
+                    label={`${(data?.year ?? 2026) - 1} · ano completo`}
                     value={brl(previousNet)}
                   />
                   <InsightMetric
@@ -1375,7 +1415,7 @@ export default function Home() {
                           {yoyDelta >= 0 ? 'acima' : 'abaixo'} em{' '}
                           {pct(Math.abs(yoyRate))}
                         </strong>{' '}
-                        frente ao mesmo período de {(data?.year ?? 2026) - 1}.
+                        frente ao ano completo de {(data?.year ?? 2026) - 1}.
                       </>
                     )}
                   </li>
@@ -1449,6 +1489,7 @@ function ProductsView({
   >(data?.category ?? 'all');
   const [selectedFamily, setSelectedFamily] = useState<string | null>(null);
   const [productsOpen, setProductsOpen] = useState(false);
+  const [customersExpanded, setCustomersExpanded] = useState(false);
   if (!data) {
     return (
       <section className="rounded-[22px] border border-dashed border-[#cfd3e4] bg-white px-6 py-14 text-center">
@@ -1466,12 +1507,12 @@ function ProductsView({
   const categoryProducts = allProducts.filter(
     (item) => productCategory === 'all' || item.categoria === productCategory,
   );
-  const familyMap = new Map<string, { name: string; value: number; products: number }>();
+  const familyMap = new Map<string, { name: string; value: number; quantity: number }>();
   for (const item of categoryProducts) {
     const name = item.familiaApelido || item.familia || 'Sem família';
-    const current = familyMap.get(name) ?? { name, value: 0, products: 0 };
+    const current = familyMap.get(name) ?? { name, value: 0, quantity: 0 };
     current.value += Number(item.faturamento || 0);
-    current.products += 1;
+    current.quantity += Number(item.quantidade || 0);
     familyMap.set(name, current);
   }
   const families = [...familyMap.values()].sort((a, b) => b.value - a.value);
@@ -1485,11 +1526,19 @@ function ProductsView({
       item.familiaApelido?.toLocaleLowerCase('pt-BR').includes(normalizedFilter)),
   );
   const total = categoryProducts.reduce((sum, item) => sum + Number(item.faturamento || 0), 0);
+  const filteredTotal = products.reduce((sum, item) => sum + Number(item.faturamento || 0), 0);
+  const quantitySold = products.reduce((sum, item) => sum + Number(item.quantidade || 0), 0);
+  const quantityFormatter = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 });
+  const quantityLabel = quantityFormatter.format(quantitySold);
+  const familyChartData = families.slice(0, 12).map((family) => ({
+    ...family,
+    label: `${pct(total ? family.value / total : 0)} · ${quantityFormatter.format(family.quantity)} un.`,
+  }));
   const categoryText = data.category
     ? ({ pecas: 'Peças', implementos: 'Implementos', servicos: 'Serviços' } as const)[data.category]
     : 'Todas as categorias';
   return (
-    <section className="space-y-4">
+    <section className="products-report space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-[18px] border border-[#dce4e0] bg-white px-5 py-4">
         <div>
           <p className="flex items-center gap-2 font-semibold text-[#24233d]">
@@ -1499,9 +1548,20 @@ function ProductsView({
             {answer} · {periodLabel} · {categoryText}
           </p>
         </div>
-        <Button variant="outline" className="rounded-full" onClick={onBack}>Voltar à Análise de Faturamento</Button>
+        <div className="revenue-screen-only flex flex-wrap gap-2">
+          <Button variant="outline" className="rounded-full" disabled={loading} onClick={() => window.print()} title="Escolha uma impressora ou Salvar como PDF">
+            <Printer className="size-4" /> Imprimir / Salvar PDF
+          </Button>
+          <Button variant="outline" className="rounded-full" onClick={onBack}>Voltar à Análise de Faturamento</Button>
+        </div>
+        <p className="revenue-print-only hidden w-full text-xs text-[#71728a]">
+          Tipo de produto: {({ all: 'Geral', pecas: 'Peças', implementos: 'Implementos', servicos: 'Serviços' })[productCategory]}
+          {' · '}{quantityLabel} unidades vendidas · {productsOpen ? 'Listagem expandida' : 'Relatório resumido'}
+          {selectedFamily ? ` · Família: ${selectedFamily}` : ''}
+          {productFilter.trim() ? ` · Busca: ${productFilter.trim()}` : ''}
+        </p>
       </div>
-      <div className="flex flex-wrap items-center gap-2 rounded-[18px] border border-[#dce4e0] bg-white px-5 py-3">
+      <div className="revenue-screen-only flex flex-wrap items-center gap-2 rounded-[18px] border border-[#dce4e0] bg-white px-5 py-3">
         <span className="mr-2 text-xs font-semibold uppercase tracking-[.08em] text-[#71728a]">Tipo de produto</span>
         {([
           ['all', 'Geral'],
@@ -1528,8 +1588,8 @@ function ProductsView({
         </div>
       )}
       <div className="grid gap-3 md:grid-cols-2">
-        <Metric label="Produtos com venda" value={String(categoryProducts.length)} caption="itens distintos no filtro selecionado" />
-        <Metric label="Valor analisado" value={brl(total)} caption="faturamento bruto dos produtos listados" />
+        <Metric label="Quantidade vendida" value={quantityLabel} caption={selectedFamily ? `Família: ${selectedFamily}` : 'soma das quantidades dos produtos no filtro selecionado'} />
+        <Metric label="Valor analisado" value={brl(filteredTotal)} caption="faturamento bruto dos produtos listados" />
       </div>
       <div
         className="rounded-[18px] border border-[#dce4e0] bg-white p-5"
@@ -1543,7 +1603,7 @@ function ProductsView({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="font-semibold">Faturamento por família</h3>
-            <p className="mt-1 text-xs text-[#71728a]">Agrupamento pro Familia</p>
+            <p className="mt-1 text-xs text-[#71728a]">Participação no faturamento e quantidade vendida por família</p>
           </div>
           {selectedFamily && (
             <Button data-family-action variant="outline" className="h-8 rounded-full text-xs" onClick={() => setSelectedFamily(null)}>Limpar seleção</Button>
@@ -1551,24 +1611,19 @@ function ProductsView({
         </div>
         {families.length ? (
           <ChartContainer config={{ value: { label: 'Faturamento', color: '#008ad0' } }} className="mt-4 h-[320px] w-full">
-            <BarChart data={families.slice(0, 12)} layout="vertical" margin={{ left: 8, right: 76 }}>
+            <BarChart data={familyChartData} layout="vertical" margin={{ left: 8, right: 140 }}>
               <CartesianGrid horizontal={false} strokeDasharray="3 3" />
               <XAxis type="number" tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} tickLine={false} axisLine={false} />
               <YAxis type="category" dataKey="name" width={150} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
               <ChartTooltip content={<ChartTooltipContent formatter={(value) => brl(Number(value))} />} />
               <Bar dataKey="value" radius={[0, 6, 6, 0]}>
                 <LabelList
-                  dataKey="value"
+                  dataKey="label"
                   position="right"
                   offset={8}
                   fill="#56576f"
                   fontSize={12}
                   fontWeight={600}
-                  formatter={(value) => new Intl.NumberFormat('pt-BR', {
-                    style: 'percent',
-                    minimumFractionDigits: 1,
-                    maximumFractionDigits: 1,
-                  }).format(total > 0 ? Number(value) / total : 0)}
                 />
                 {families.slice(0, 12).map((family) => (
                   <Cell
@@ -1589,21 +1644,28 @@ function ProductsView({
           <p className="py-10 text-center text-sm text-[#71728a]">Não há famílias com faturamento neste período.</p>
         )}
       </div>
-      <div className="overflow-hidden rounded-[18px] border border-[#dce4e0] bg-white">
+      <div className={`products-list overflow-hidden rounded-[18px] border border-[#dce4e0] bg-white ${productsOpen ? "" : "revenue-screen-only"}`}>
         <div className="flex flex-col justify-between gap-3 border-b border-[#e2e3ec] px-5 py-4 md:flex-row md:items-center">
-          <button className="flex min-w-0 items-center gap-3 text-left" onClick={() => setProductsOpen((open) => !open)} aria-expanded={productsOpen}>
+          <button className="revenue-screen-only flex min-w-0 items-center gap-3 text-left" onClick={() => setProductsOpen((open) => !open)} aria-expanded={productsOpen}>
             <ChevronDown className={`size-4 shrink-0 text-[#312d5e] transition-transform ${productsOpen ? 'rotate-180' : ''}`} />
             <div>
               <h3 className="font-semibold">Produtos adquiridos pelo cliente</h3>
               <p className="mt-1 text-xs text-[#71728a]">
-                {selectedFamily ? `Família selecionada: ${selectedFamily} · ${products.length} produtos` : `${categoryProducts.length} produtos · clique para expandir`}
+                {selectedFamily ? `Família selecionada: ${selectedFamily} · ` : ''}{quantityLabel} unidades vendidas · clique para {productsOpen ? 'recolher' : 'expandir'}
               </p>
             </div>
           </button>
+          <h3 className="revenue-print-only hidden font-semibold">Produtos adquiridos pelo cliente</h3>
           {productsOpen && (
-            <div className="flex min-w-0 items-center gap-2 rounded-xl border border-[#d9dbea] bg-[#f8f9fc] px-3 py-2 md:w-[360px]">
+            <div className="revenue-screen-only flex flex-wrap items-center gap-2">
+            <Button variant="outline" className="rounded-full" disabled={loading || !products.length} aria-expanded={customersExpanded} onClick={() => setCustomersExpanded((expanded) => !expanded)}>
+              <Users className="size-4" />
+              {customersExpanded ? 'Recolher clientes de todos' : 'Expandir clientes de todos'}
+            </Button>
+            <div className="revenue-screen-only flex min-w-0 items-center gap-2 rounded-xl border border-[#d9dbea] bg-[#f8f9fc] px-3 py-2 md:w-[360px]">
               <Search className="size-4 shrink-0 text-[#74758f]" />
               <input value={productFilter} onChange={(event) => setProductFilter(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="Código, produto ou família" aria-label="Filtrar produtos analisados" />
+            </div>
             </div>
           )}
         </div>
@@ -1621,7 +1683,8 @@ function ProductsView({
           </TableHeader>
           <TableBody>
             {products.map((item) => (
-              <TableRow key={`${item.codigoProduto}-${item.produto}`}>
+              <Fragment key={`${item.codigoProduto}-${item.produto}`}>
+              <TableRow>
                 <TableCell className="pl-6">
                   <span className="block text-xs font-semibold text-[#008ad0]">{item.codigoProduto}</span>
                   <span className="block max-w-[420px] truncate font-medium">{item.produto}</span>
@@ -1632,6 +1695,34 @@ function ProductsView({
                 <TableCell className="text-right font-semibold tabular-nums">{brl(item.faturamento)}</TableCell>
                 <TableCell className="pr-6 text-right font-semibold tabular-nums text-[#312d5e]">{pct(total ? item.faturamento / total : 0)}</TableCell>
               </TableRow>
+              {customersExpanded && (
+                <TableRow className="bg-[#f5f9fc] hover:bg-[#f5f9fc]">
+                  <TableCell colSpan={6} className="px-6 py-3">
+                    <div className="border-l-2 border-[#b6dff2] pl-4">
+                      <p className="mb-2 text-xs font-semibold text-[#62637b]">Clientes que compõem a quantidade deste produto</p>
+                      {item.clientesDetalhes?.length ? (
+                        <table className="w-full text-sm" aria-label={`Clientes do produto ${item.codigoProduto}`}>
+                          <thead><tr className="text-left text-xs text-[#62637b]">
+                            <th scope="col" className="py-1 pr-4">Código do cliente</th>
+                            <th scope="col" className="py-1 pr-4">Nome</th>
+                            <th scope="col" className="py-1 pr-4">CNPJ</th>
+                            <th scope="col" className="py-1 text-right">Quantidade</th>
+                          </tr></thead>
+                          <tbody>{item.clientesDetalhes.map((customer) => (
+                            <tr key={customer.id} className="border-t border-[#e2eaf0]">
+                              <td className="py-1.5 pr-4 text-[#008ad0]">{customer.codigo}</td>
+                              <td className="whitespace-normal py-1.5 pr-4">{customer.nome}</td>
+                              <td className="py-1.5 pr-4">{customer.documento || 'Não informado'}</td>
+                              <td className="py-1.5 text-right tabular-nums">{new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(customer.quantidade)}</td>
+                            </tr>
+                          ))}</tbody>
+                        </table>
+                      ) : <p className="text-xs text-[#71728a]">Detalhamento de clientes indisponível. Atualize a análise para carregar os dados.</p>}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
+              </Fragment>
             ))}
             {!products.length && (
               <TableRow><TableCell colSpan={6} className="py-10 text-center text-sm text-[#71728a]">Nenhum produto encontrado neste contexto.</TableCell></TableRow>
