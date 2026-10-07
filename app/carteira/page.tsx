@@ -1,207 +1,227 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowUpRight, BellRing, CalendarClock, Check, ChevronRight, CircleAlert, RefreshCw, Search, TrendingDown, Users } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { ArrowLeft, ChevronDown, ChevronRight, RefreshCw, Search, Users, Printer, Lightbulb } from 'lucide-react';
+import { portfolioPrintHtml, proposalPrintHtml, printProposalDocument, type PrintableProposal } from '@/lib/proposal-print';
+import { PortfolioNav } from '@/components/portfolio-nav';
 import { Button } from '@/components/ui/button';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetClose } from '@/components/ui/sheet';
 
-type Alert = { kind: string; title: string; evidence: string; action: string; impact: number; score: number };
-type FollowUp = { owner: string; due: string; note: string; reason: string; created_at: string };
-type Group = {
-  id: string; name: string; members: Array<{ id: number; codigo: string; nome: string; documento: string }>;
-  alerts: Alert[]; score: number; priority: string; impact: number; annualRevenue: number;
-  priorityReason: string; nextAction: string;
-  recentRevenue: number; priorRevenue: number; lastSale: string | null; lastOrder: string | null;
-  openOrders: number; openOrdersCount: number; openProposals: number; openProposalsCount: number;
-  recentProposalsCount: number; oldestProposal: string | null;
-  monthly: Array<{ month: string; value: number }>;
-  followUp: FollowUp | null; escalated: boolean; overdue: boolean;
-  status: 'attention' | 'scheduled' | 'clear' | 'review';
-};
-type Snapshot = { asOf: string; generatedAt: string; analyzedGroups: number; groups: Group[]; error?: string; refreshing: boolean; period: { start: string; end: string } };
-const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
-const day = (v: string | null) => v ? new Date(v.slice(0, 10) + 'T12:00:00').toLocaleDateString('pt-BR') : 'Sem registro no histórico';
-const normalize = (v: string) => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-const kinds = { proposals: 'Propostas sem compra', cadence: 'Recompra atrasada', decline: 'Queda de faturamento', categories: 'Perda de categorias', inactive: 'Cliente inativo' };
-const inputClass = 'min-h-11 w-full rounded-lg border border-[#dcdde7] bg-white px-3 py-2 text-sm text-[#312d5e] focus:outline-none focus:ring-2 focus:ring-[#008ad0]';
+type Filters = { years: number; baseYear: number; category: string; mode: string };
+type Unit = { id: number; codigo: string; nome: string; documento: string; historicalRevenue: number; lastSale: string | null; proposalCount: number; proposalValue: number; lastOrder: string | null; hasBaseYearOrder?: boolean };
+type Group = Omit<Unit, 'id' | 'codigo' | 'nome' | 'documento'> & { id: string; name: string; members: Unit[] };
+type Report = { generatedAt: string; filters: Filters; groups: Group[]; period: { historyStart: string; historyEnd: string; inactiveStart: string; inactiveEnd: string } };
+type Proposal = { id: number; numero: string; data: string; itemCount: number; valor: number };
+type PanelTarget = { group: Group; unit?: Unit };
+type DetailCache = Map<string, Promise<unknown>>;
+type ListedProposal = Proposal & { unit: Unit };
+type Product = { id: number; codigo: string; nome: string; familia: string; quantidade: number; valor: number };
+const money = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const number = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 4 });
+const day = (s: string | null) => s ? s.slice(0, 10).split('-').reverse().join('/') : '—';
+const normalize = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const inputClass = 'mt-1 w-full rounded-lg border border-[#d9dbea] bg-white px-3 py-2 text-sm text-[#24233d]';
+const th = 'px-4 py-3 text-left text-xs font-semibold text-[#62637b]';
+const td = 'px-4 py-3 text-sm';
+const yearNow = () => Number(new Intl.DateTimeFormat('en', { timeZone: 'America/Sao_Paulo', year: 'numeric' }).format(new Date()));
+const query = (filters: Filters, extra: Record<string, string> = {}) => new URLSearchParams({ years: String(filters.years), baseYear: String(filters.baseYear), category: filters.category, mode: filters.mode, ...extra });
+
+async function read<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, { signal });
+  const body = await response.json() as T & { error?: string };
+  if (!response.ok) throw new Error(body.error || 'Não foi possível carregar os dados. Tente novamente.');
+  return body as T;
+}
+
+function Pages({ page, count, size, onChange }: { page: number; count: number; size: number; onChange: (page: number) => void }) {
+  if (!count) return null;
+  return <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 text-xs text-[#62637b]">
+    <span>{number(page * size + 1)}–{number(Math.min((page + 1) * size, count))} de {number(count)}</span>
+    <div className="flex items-center gap-2"><Button variant="outline" disabled={!page} onClick={() => onChange(page - 1)}>Anterior</Button><span>Página {number(page + 1)} de {number(Math.ceil(count / size))}</span><Button variant="outline" disabled={(page + 1) * size >= count} onClick={() => onChange(page + 1)}>Próxima</Button></div>
+  </div>;
+}
 
 export default function PortfolioPage() {
-  const [data, setData] = useState<Snapshot | null>(null);
+  const [filters, setFilters] = useState<Filters>({ years: 10, baseYear: yearNow(), category: 'all', mode: 'base' });
+  const [data, setData] = useState<Report | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [printingReport, setPrintingReport] = useState(false);
+  const [reportPrintError, setReportPrintError] = useState('');
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [selected, setSelected] = useState('');
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('attention');
-  const [kind, setKind] = useState('all');
-  const [priority, setPriority] = useState('all');
-  const [sort, setSort] = useState('priority');
   const [page, setPage] = useState(0);
-  const [newSignals, setNewSignals] = useState(0);
-  const [saved, setSaved] = useState(false);
-  const previous = useRef<Map<string, string> | null>(null);
-  const running = useRef(false);
-  const controller = useRef<AbortController | null>(null);
-  const load = useCallback(async () => {
-    if (running.current) return;
-    running.current = true;
-    setBusy(true);
-    controller.current = new AbortController();
-    try {
-      const response = await fetch('/api/portfolio', { cache: 'no-store', signal: controller.current.signal });
-      const payload = await response.json() as Snapshot & { error?: string };
-      if (response.status === 202) { setError(''); return; }
-      if (!response.ok) throw new Error(payload.error || 'Não foi possível consultar a carteira.');
-      const snapshot = payload as Snapshot;
-      const signatures = new Map(snapshot.groups.map(g => [g.id, g.alerts.map(a => a.kind).sort().join(',') + ':' + g.priority]));
-      if (previous.current) {
-        const prior = previous.current;
-        const changed = snapshot.groups.filter(g => g.alerts.length && signatures.get(g.id) !== prior.get(g.id)).length;
-        if (changed) setNewSignals(changed);
-      }
-      previous.current = signatures;
-      setData(snapshot);
-      setError(snapshot.error || '');
-    } catch (err) {
-      if (err instanceof Error && err.name !== 'AbortError') setError(err.message);
-    } finally { running.current = false; setBusy(false); }
-  }, []);
-  useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => { if (!document.hidden) void load(); }, 15000);
-    const onFocus = () => { void load(); };
-    window.addEventListener('focus', onFocus);
-    return () => { clearInterval(timer); window.removeEventListener('focus', onFocus); controller.current?.abort(); };
-  }, [load]);
-  useEffect(() => { setPage(0); }, [search, status, kind, priority, sort]);
-  useEffect(() => {
-    if (selected && window.innerWidth < 1280) document.getElementById('portfolio-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [selected]);
-  const groups = data?.groups || [];
-  const actionable = groups.filter(g => g.status === 'attention' || g.status === 'review');
-  const filtered = groups.filter(g =>
-    (status === 'all' || (status === 'attention' ? ['attention', 'review'].includes(g.status) : g.status === status)) &&
-    (kind === 'all' || g.alerts.some(a => a.kind === kind)) &&
-    (priority === 'all' || g.priority === priority) &&
-    (!search || normalize([g.name, g.followUp?.owner || '', ...g.members.flatMap(m => [m.nome, m.codigo, m.documento || ''])].join(' ')).includes(normalize(search)))
-  ).sort((a, b) => sort === 'impact' ? b.impact-a.impact : Number(b.overdue)-Number(a.overdue) || b.score-a.score || b.impact-a.impact);
-  useEffect(() => { setPage(p => Math.min(p, Math.max(0, Math.ceil(filtered.length / 20)-1))); }, [filtered.length]);
-  const visible = filtered.slice(page * 20, page * 20 + 20);
-  const current = filtered.find(g => g.id === selected) || visible[0];
-  const stale = data && (Boolean(error) || Date.now() - new Date(data.generatedAt).getTime() > 20 * 60000);
-
-  return (
-    <main className="min-h-screen bg-[#f5f6fa] text-[#292747]">
-      <header className="border-b border-[#ddddeb] bg-[#312d5e] text-white">
-        <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-4 px-5 py-5 md:px-8">
-          <div className="flex items-center gap-4">
-            <a href="/" aria-label="Voltar à análise de faturamento" className="rounded-lg p-2 hover:bg-white/10"><ArrowLeft className="size-5" /></a>
-            <div><p className="text-sm text-white/70">Pulso Comercial</p><h1 className="text-xl font-semibold">Carteira inteligente</h1></div>
-          </div>
-          <div className="flex items-center gap-3 text-sm"><span className="rounded-full border border-white/20 px-3 py-1">Visão geral · todos os grupos</span><Button variant="outline" onClick={() => void load()} disabled={busy} className="border-white/25 bg-transparent text-white hover:bg-white/10 hover:text-white"><RefreshCw className={`size-4 ${busy ? 'animate-spin' : ''}`} /> Consultar</Button></div>
-        </div>
-      </header>
-      <div className="mx-auto max-w-[1600px] space-y-5 px-5 py-6 md:px-8">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div><h2 className="text-2xl font-semibold tracking-tight">Onde agir agora</h2><p className="mt-1 text-sm text-[#686980]">Sinais consolidados entre empresas do mesmo grupo, com contexto para a próxima conversa.</p></div>
-          <p className="text-sm text-[#686980]">{data ? <>Calculado em {new Date(data.generatedAt).toLocaleString('pt-BR')}<br />{data.analyzedGroups.toLocaleString('pt-BR')} grupos analisados · recálculo a cada 15 min</> : 'Preparando a primeira análise…'}</p>
-        </div>
-        {error && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900"><span>{error} {data && 'Os dados abaixo são da última análise disponível.'}</span><Button variant="outline" onClick={() => void load()}>Tentar novamente</Button></div>}
-        {stale && !error && <p role="status" className="rounded-xl bg-amber-50 p-4 text-amber-900">A última análise tem mais de 20 minutos. Aguarde a atualização antes de tomar decisões.</p>}
-        {newSignals > 0 && <div role="status" className="flex items-center justify-between gap-3 rounded-xl bg-[#e1f3fc] p-4 text-[#006da6]"><span>{newSignals} grupo(s) com sinal novo ou mudança de prioridade nesta atualização.</span><button onClick={() => setNewSignals(0)} className="font-semibold underline">Entendi</button></div>}
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {saved && <p role="status" className="rounded-xl bg-[#e1f3fc] p-4 text-sm text-[#006da6] sm:col-span-2 xl:col-span-4">Acompanhamento salvo. Consulte o grupo em “Em acompanhamento” ou “Todas as situações”. <button onClick={() => setSaved(false)} className="ml-2 underline">Entendi</button></p>}
-          <Metric icon={BellRing} label="Para agir" value={data ? String(actionable.length) : '—'} detail="Sem ação, prazo atingido ou novo sinal" />
-          <Metric icon={CircleAlert} label="Prioridade alta" value={data ? String(actionable.filter(g => g.priority === 'Alta').length) : '—'} detail="Na fila de ação" />
-          <Metric icon={CalendarClock} label="Acompanhamentos vencidos" value={data ? String(groups.filter(g => g.overdue).length) : '—'} detail="Prazo anterior à data de hoje" />
-          <Metric icon={Users} label="Em acompanhamento" value={data ? String(groups.filter(g => g.status === 'scheduled').length) : '—'} detail="Próximo contato já registrado" />
-        </div>
-        <details className="rounded-xl border border-[#ddddeb] bg-white px-4 py-3 text-sm text-[#686980]">
-          <summary className="cursor-pointer font-medium text-[#312d5e]">Como os sinais são calculados</summary>
-          <div className="mt-3 grid gap-3 leading-relaxed md:grid-cols-2">
-            <p><strong>Prioridade:</strong> combina a urgência dos sinais e o valor já comprado pelo grupo. O histórico disponível desde o início dos 24 meses completos recebe peso adicional a partir de R$ 100 mil e R$ 500 mil. Valores de propostas não são usados como venda futura garantida.</p>
-            <p><strong>Inatividade:</strong> pelo menos 180 dias sem faturar, R$ 1.000 ou mais de compras no histórico disponível, sem pedido novo nos últimos 90 dias e sem pedido em aberto. Sinaliza uma oportunidade de reativação, sujeita à confirmação de necessidade e sazonalidade. Inatividade e recompra contam como um único motivo na prioridade.</p>
-            <p><strong>Grupo completo:</strong> vínculos transitivos por raiz de CNPJ, grupo empresarial e nome de grupo. O cadastro atual é aplicado a todo o histórico. CPF não é agrupado por raiz.</p>
-            <p><strong>Propostas:</strong> abertas e sem conversão, com pelo menos uma criada nos últimos 365 dias, sem novo pedido ou faturamento há 90 dias e sem pedido em aberto. Propostas apenas antigas não geram alerta ativo. Recompra exige pelo menos cinco dias de compra e considera a variação do intervalo habitual.</p>
-            <p><strong>Queda:</strong> três meses completos contra os três anteriores. Limite inicial de 30% a 60%, conforme a oscilação do grupo, e redução mínima de R$ 1.000. Com base sazonal positiva, exige também queda de pelo menos 20% contra o mesmo trimestre do ano anterior.</p>
-            <p><strong>Categorias:</strong> compradas em pelo menos três meses anteriores, com R$ 1.000 ou mais, sem faturamento há 90 dias, enquanto outras seguem ativas. Pedidos em aberto precisam ser conferidos pelo vendedor.</p>
-            <p><strong>Valores:</strong> faturamento antes das devoluções, com as mesmas regras fiscais da análise de faturamento. O gráfico mostra os últimos 12 meses completos. Limites iniciais para calibração; os sinais não são probabilidades de perda.</p>
-            <p><strong>Acompanhamento:</strong> um registro retira o grupo da fila até a data marcada. Um novo tipo de sinal ou aumento de 15 pontos na pontuação reabre a atenção. O monitor recalcula enquanto a API está ligada; avisos aparecem nesta tela, sem envio externo.</p>
-          </div>
-        </details>
-        <section aria-label="Filtros da carteira" className="flex flex-wrap gap-3 rounded-xl border border-[#ddddeb] bg-white p-4">
-          <label className="relative min-w-[200px] flex-1"><span className="sr-only">Buscar grupo, empresa, código ou responsável</span><Search className="absolute left-3 top-3 size-5 text-[#85869a]" /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Grupo, empresa, código ou responsável" className={`${inputClass} pl-10`} /></label>
-          <label><span className="sr-only">Situação</span><select value={status} onChange={e => setStatus(e.target.value)} className={inputClass}><option value="attention">Para agir</option><option value="scheduled">Em acompanhamento</option><option value="clear">Sem sinais atuais</option><option value="all">Todas as situações</option></select></label>
-          <label><span className="sr-only">Tipo de sinal</span><select value={kind} onChange={e => setKind(e.target.value)} className={inputClass}><option value="all">Todos os sinais</option>{Object.entries(kinds).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
-          <label><span className="sr-only">Prioridade</span><select value={priority} onChange={e => setPriority(e.target.value)} className={inputClass}><option value="all">Todas as prioridades</option><option>Alta</option><option>Média</option></select></label>
-          <label><span className="sr-only">Ordenação</span><select value={sort} onChange={e => setSort(e.target.value)} className={inputClass}><option value="priority">Urgência primeiro</option><option value="impact">Maior valor de referência</option></select></label>
-        </section>
-        {!data && <div role="status" className="rounded-xl border border-[#ddddeb] bg-white p-12 text-center"><RefreshCw className={`mx-auto mb-4 size-7 text-[#008ad0] ${!error ? 'animate-spin' : ''}`} /><p>{error ? 'A análise está indisponível no momento.' : 'Consolidando grupos, faturamento, pedidos e propostas…'}</p><p className="mt-2 text-sm text-[#686980]">A primeira consulta pode levar alguns instantes.</p></div>}
-        {data && filtered.length === 0 && <div className="rounded-xl border border-[#ddddeb] bg-white p-12 text-center"><Check className="mx-auto mb-3 size-7 text-[#008ad0]" /><h3 className="font-semibold">Nenhum grupo nesta seleção</h3><p className="mt-2 text-sm text-[#686980]">{groups.length ? 'Altere os filtros para consultar outros sinais e acompanhamentos.' : 'Nenhum grupo atingiu os critérios atuais. O monitor continua reavaliando a carteira.'}</p></div>}
-        {data && filtered.length > 0 && <div className="grid items-start gap-5 xl:grid-cols-[minmax(320px,.85fr)_minmax(0,1.5fr)]">
-          <section aria-label="Grupos prioritários" className="min-w-0 space-y-3">
-            <p className="text-sm text-[#686980]">{filtered.length} grupo(s) · selecione para analisar</p>
-            <div className="max-h-[65vh] space-y-3 overflow-y-auto p-1 xl:max-h-[1100px]">
-            {visible.map(group => <button key={group.id} onClick={() => setSelected(group.id)} aria-pressed={current?.id === group.id} className={`w-full rounded-xl border bg-white p-4 text-left transition hover:border-[#008ad0] ${current?.id === group.id ? 'border-[#008ad0] ring-1 ring-[#008ad0]' : 'border-[#ddddeb]'}`}>
-              <div className="flex items-center justify-between gap-2"><Badge group={group} /><ChevronRight className="size-4 shrink-0 text-[#85869a]" /></div>
-              <h3 className="mt-3 break-words font-semibold">{group.name}</h3>
-              <p className="mt-1 text-sm text-[#686980]">{group.members.length} empresa(s) · {group.alerts.length} sinal(is){group.overdue ? ' · prazo vencido' : ''}</p>
-              <div className="mt-3 flex flex-wrap gap-1.5">{group.alerts.map(a => <span key={a.kind} className="rounded bg-[#f0f2f8] px-2 py-1 text-xs text-[#514d74]">{kinds[a.kind as keyof typeof kinds]}</span>)}</div>
-              <div className="mt-4 flex flex-wrap justify-between gap-2 border-t border-[#eeeff5] pt-3 text-sm"><span className="text-[#686980]">Faturamento em 12 meses</span><strong>{brl(group.annualRevenue)}</strong></div>
-              {group.followUp && <p className="mt-2 text-sm text-[#686980]">{group.followUp.owner} · próximo contato {day(group.followUp.due)}</p>}
-            </button>)}
-            </div>
-            <div className="flex items-center justify-between gap-2 text-sm"><Button variant="outline" disabled={page === 0} onClick={() => setPage(p => p-1)}>Anterior</Button><span>{page+1} / {Math.max(1, Math.ceil(filtered.length/20))}</span><Button variant="outline" disabled={(page+1)*20 >= filtered.length} onClick={() => setPage(p => p+1)}>Próxima</Button></div>
-          </section>
-          {current && <GroupDetail key={current.id} group={current} asOf={data.asOf} onSaved={async () => { setSaved(true); await load(); }} />}
-        </div>}
-        <p className="text-sm text-[#686980]">Os registros de acompanhamento ficam salvos no servidor local. A carteira exibida é geral; não há divisão automática por vendedor nesta versão.</p>
-      </div>
-    </main>
-  );
-}
-
-function Metric({ icon: Icon, label, value, detail }: { icon: typeof Users; label: string; value: string; detail: string }) {
-  return <div className="rounded-xl border border-[#ddddeb] bg-white p-5"><div className="flex items-center gap-2 text-sm text-[#686980]"><Icon className="size-4 text-[#008ad0]" />{label}</div><p className="mt-3 text-3xl font-semibold">{value}</p><p className="mt-2 text-sm text-[#686980]">{detail}</p></div>;
-}
-
-function Badge({ group }: { group: Group }) {
-  return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${group.escalated || group.overdue || group.priority === 'Alta' ? 'bg-red-50 text-red-700' : 'bg-[#e1f3fc] text-[#006da6]'}`}>{group.escalated ? 'Novo sinal · reavaliar' : group.overdue ? 'Acompanhamento vencido' : group.status === 'scheduled' ? 'Em acompanhamento' : group.priority === 'Sem sinais' ? 'Sem sinais atuais' : `Prioridade ${group.priority.toLowerCase()}`}</span>;
-}
-
-function GroupDetail({ group, asOf, onSaved }: { group: Group; asOf: string; onSaved: () => Promise<void> }) {
-  const [owner, setOwner] = useState(group.followUp?.owner || '');
-  const [due, setDue] = useState('');
-  const [reason, setReason] = useState('Contato pendente');
-  const [note, setNote] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState('');
-  const [saveError, setSaveError] = useState(false);
-  const max = Math.max(1, ...group.monthly.map(m => m.value));
-  async function save(event: React.FormEvent) {
-    event.preventDefault(); setSaving(true); setMessage('');
-    try {
-      const response = await fetch('/api/portfolio/actions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ groupId: group.id, owner, due, note, reason }) });
-      const payload = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(payload.error || 'Não foi possível registrar a ação.');
-      setSaveError(false); setMessage('Acompanhamento salvo. O grupo será reavaliado na data marcada ou se surgir um novo sinal.');
-      await onSaved();
-    } catch (err) { setSaveError(true); setMessage(err instanceof Error ? err.message : 'Falha ao registrar. Tente novamente.'); }
-    finally { setSaving(false); }
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [panel, setPanel] = useState<PanelTarget | null>(null);
+  const detailCache = useRef<DetailCache>(new Map());
+  const opener = useRef<HTMLElement | null>(null);
+  function openPanel(group: Group, unit?: Unit) { opener.current = document.activeElement as HTMLElement; setPanel({ group, unit }); }
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => () => request.current?.abort(), []);
+  async function load(event: React.FormEvent) {
+    event.preventDefault();
+    request.current?.abort();
+    const controller = new AbortController(); request.current = controller;
+    setPanel(null); detailCache.current = new Map();
+    setLoading(true); setError(''); setData(null); setExpanded(new Set()); setPage(0);
+    try { const result = await read<Report>(`/api/portfolio?${query(filters)}`, controller.signal); if (!controller.signal.aborted) setData(result); }
+    catch (e) { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : 'Falha ao analisar.'); }
+    finally { if (!controller.signal.aborted) setLoading(false); }
   }
-  return <section id="portfolio-detail" aria-label={`Análise de ${group.name}`} className="min-w-0 scroll-mt-5 overflow-hidden rounded-xl border border-[#ddddeb] bg-white">
-    <div className="border-b border-[#e7e8ef] p-5 md:p-6"><Badge group={group} /><h2 className="mt-3 break-words text-xl font-semibold">{group.name}</h2><p className="mt-1 text-sm text-[#686980]">{group.members.length} empresa(s) consolidadas · análise até {day(asOf)}</p></div>
-    <div className="space-y-6 p-5 md:p-6">
-      <section className="rounded-xl border border-[#b9dff2] bg-[#eef8fd] p-4"><h3 className="font-semibold">Por que merece atenção</h3><p className="mt-2 text-sm leading-relaxed text-[#514d74]">{group.priorityReason}</p><h3 className="mt-4 font-semibold">Próxima ação sugerida</h3><p className="mt-2 text-sm leading-relaxed">{group.nextAction}</p></section>
-      <div className="grid gap-4 sm:grid-cols-2"><Fact label="Último faturamento no histórico" value={day(group.lastSale)} /><Fact label="Último pedido válido" value={day(group.lastOrder)} /><Fact label={`${group.openOrdersCount} pedido(s) em aberto`} value={brl(group.openOrders)} /><Fact label={`${group.openProposalsCount} proposta(s) em aberto`} value={brl(group.openProposals)} /></div>
-      {group.openOrdersCount > 0 && <p className="rounded-lg bg-[#eaf5fc] p-3 text-sm text-[#006da6]">Há pedidos em aberto no grupo. Verifique os produtos e a previsão de entrega antes de interpretar a queda como perda comercial.</p>}
-      <details className="rounded-xl border border-[#e2e3ec] p-4"><summary className="cursor-pointer text-sm font-medium">Ver evidências e critérios ({group.alerts.length} sinais)</summary><div className="mt-4 space-y-3">{group.alerts.map(alert => <article key={alert.kind} className="rounded-xl border border-[#e2e3ec] p-4"><h3 className="flex items-center gap-2 font-semibold"><TrendingDown className="size-4 shrink-0 text-[#008ad0]" />{alert.title}</h3><p className="mt-2 text-sm leading-relaxed text-[#686980]">{alert.evidence}</p><p className="mt-3 flex gap-2 text-sm leading-relaxed"><ArrowUpRight className="mt-0.5 size-4 shrink-0 text-[#008ad0]" />{alert.action}</p></article>)}{!group.alerts.length && <p className="text-sm">Confirme o resultado do contato antes de considerar a recuperação concluída.</p>}</div></details>
-      <section aria-label="Histórico de faturamento"><h3 className="font-semibold">Faturamento · 12 meses completos</h3><div className="mt-4 flex h-36 items-end gap-1.5" role="img" aria-label="Evolução mensal do faturamento; valores detalhados na tabela abaixo">{group.monthly.map(m => <div key={m.month} className="flex h-full min-w-0 flex-1 flex-col justify-end gap-2"><div title={`${day(m.month)}: ${brl(m.value)}`} className="min-h-0 rounded-t bg-[#008ad0]" style={{ height: `${Math.max(0, m.value)/max*100}%` }} /><span className="text-center text-xs text-[#686980]">{m.month.slice(5, 7)}</span></div>)}</div><details className="mt-3 text-sm"><summary className="cursor-pointer text-[#006da6]">Ver valores por mês</summary><table className="mt-3 w-full text-sm"><thead><tr className="border-b"><th className="py-2 text-left">Mês</th><th className="py-2 text-right">Faturamento</th></tr></thead><tbody>{group.monthly.map(m => <tr key={m.month} className="border-b border-[#eeeff5]"><td className="py-2">{m.month.slice(5, 7)}/{m.month.slice(0, 4)}</td><td className="text-right">{brl(m.value)}</td></tr>)}</tbody></table></details></section>
-      <details className="rounded-lg border border-[#e2e3ec] p-3 text-sm"><summary className="cursor-pointer font-medium">Empresas consideradas ({group.members.length})</summary><ul className="mt-3 max-h-64 space-y-3 overflow-y-auto">{group.members.map(m => <li key={m.id}><p className="break-words font-medium">{m.codigo} · {m.nome}</p><p className="text-[#686980]">{m.documento || 'Sem documento'}</p></li>)}</ul></details>
-      {group.followUp && <section className="rounded-xl bg-[#f5f6fa] p-4"><h3 className="font-semibold">Último acompanhamento</h3><p className="mt-2 text-sm">{group.followUp.owner} · {group.followUp.reason}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm text-[#686980]">{group.followUp.note}</p><p className="mt-3 text-sm font-medium">Próximo contato: {day(group.followUp.due)}</p></section>}
-      <form onSubmit={save} className="space-y-4 border-t border-[#e2e3ec] pt-5"><h3 className="font-semibold">Registrar próxima ação</h3><div className="grid gap-3 sm:grid-cols-2"><label className="space-y-1 text-sm"><span>Responsável</span><input required maxLength={120} value={owner} onChange={e => setOwner(e.target.value)} className={inputClass} placeholder="Nome do vendedor" /></label><label className="space-y-1 text-sm"><span>Próximo contato</span><input type="date" required min={asOf} value={due} onChange={e => setDue(e.target.value)} className={inputClass} /></label></div><label className="block space-y-1 text-sm"><span>Motivo / situação</span><select value={reason} onChange={e => setReason(e.target.value)} className={inputClass}>{['Contato pendente', 'Negociação em andamento', 'Sazonalidade', 'Concorrência', 'Entrega / operação', 'Outro'].map(r => <option key={r}>{r}</option>)}</select></label><label className="block space-y-1 text-sm"><span>Próxima ação e contexto do contato</span><textarea required rows={3} maxLength={2000} value={note} onChange={e => setNote(e.target.value)} className={inputClass} placeholder="O que foi identificado e o que será feito até a próxima data?" /></label>{message && <p role={saveError ? 'alert' : 'status'} className={`text-sm ${saveError ? 'text-red-700' : 'text-[#006da6]'}`}>{message}</p>}<Button type="submit" disabled={saving} className="min-h-11 bg-[#312d5e] text-white">{saving ? 'Salvando…' : 'Salvar acompanhamento'}</Button><p className="text-sm text-[#686980]">A ação fica registrada no Pulso e não altera os pedidos ou propostas do ERP.</p></form>
+  const term = normalize(search.trim());
+  const groups = (data?.groups ?? []).filter(g => !term || normalize([g.name, ...g.members.flatMap(m => [m.codigo, m.nome, m.documento])].join(' ')).includes(term));
+  async function printReport() {
+    if (!data) return;
+    setPrintingReport(true); setReportPrintError('');
+    try {
+      const user = await read<{ login?: string }>('/api/me').catch(() => null);
+      await printProposalDocument(portfolioPrintHtml({ groups, expanded, category: ({ all: 'Geral', pecas: 'Peças', implementos: 'Implementos' } as Record<string,string>)[data.filters.category], years: data.filters.years, baseYear: data.filters.baseYear, period: data.period, search: search.trim(), login: user?.login || 'Não identificado (sem autenticação Windows)', printedAt: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }), generatedAt: new Date(data.generatedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }), logo: new URL('/logo-dmb.jpg', window.location.origin).href }));
+    } catch (e) { setReportPrintError(e instanceof Error ? e.message : 'Não foi possível preparar a impressão.'); }
+    finally { setPrintingReport(false); }
+  }
+  const toggle = (id: string) => setExpanded(current => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  return <main className="min-h-screen bg-[#f5f6fb] text-[#24233d]">
+    <header className="border-b border-[#ddddeb] bg-white px-6 py-4"><div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-4"><a href="/" className="flex items-center gap-2 text-sm text-[#62637b]"><ArrowLeft className="size-4" />Voltar ao faturamento</a><div className="border-l pl-4"><p className="text-xs uppercase tracking-widest text-[#71728a]">Carteira inteligente</p><h1 className="text-lg font-semibold">Clientes que deixaram de comprar</h1></div></div></header>
+    <PortfolioNav />
+    <div className="mx-auto max-w-[1500px] space-y-5 px-5 py-7">
+      <div><h2 className="text-2xl font-semibold">Análise de clientes por grupo</h2><p className="mt-2 text-sm text-[#62637b]">Encontre grupos com faturamento no histórico e sem compras no período de comparação. Expanda os grupos para ver as unidades e clique na quantidade de propostas para conferir os produtos no painel lateral.</p></div>
+      <form onSubmit={load} className="rounded-2xl border border-[#ddddeb] bg-white p-5">
+        <div className="grid items-end gap-4 md:grid-cols-2 xl:grid-cols-[.8fr_.8fr_1fr_1.6fr_auto]">
+          <label className="text-sm font-medium">Período de análise (anos)<input type="number" min={1} max={50} required value={filters.years} onChange={e => setFilters({ ...filters, years: Number(e.target.value) })} className={inputClass} /></label>
+          <label className="text-sm font-medium">Ano-base<input type="number" min={1901} max={yearNow()} required value={filters.baseYear} onChange={e => setFilters({ ...filters, baseYear: Number(e.target.value) })} className={inputClass} /></label>
+          <label className="text-sm font-medium">Tipo de produto<select value={filters.category} onChange={e => setFilters({ ...filters, category: e.target.value })} className={inputClass}><option value="all">Geral</option><option value="pecas">Peças</option><option value="implementos">Implementos</option></select></label>
+          <label className="text-sm font-medium">Sem faturamento<select value={filters.mode} onChange={e => setFilters({ ...filters, mode: e.target.value })} className={inputClass}><option value="base">No ano-base</option><option value="both">No ano-base e no ano anterior</option></select></label>
+          <Button type="submit" disabled={loading} className="bg-[#312d5e] text-white hover:bg-[#454073]"><RefreshCw className={`size-4 ${loading ? 'animate-spin' : ''}`} />{loading ? 'Analisando…' : 'Analisar clientes'}</Button>
+        </div>
+        <p className="mt-4 text-xs leading-relaxed text-[#71728a]">O histórico começa em janeiro do ano-base menos o período informado. Uma compra de qualquer unidade impede que o grupo seja considerado sem compras. No ano vigente, a comparação vai até hoje.</p>
+      </form>
+      <details className="rounded-xl border border-[#ddddeb] bg-white px-5 py-3 text-sm text-[#62637b]"><summary className="cursor-pointer font-medium">Critérios da análise</summary><div className="mt-3 space-y-2 leading-relaxed"><p>Grupos consolidados pelo cadastro atual: raiz de CNPJ, grupo empresarial e nome de grupo, inclusive vínculos entre filiais. CPF não é agrupado por raiz.</p><p>Faturamento conforme as regras fiscais da Análise de Faturamento, antes das devoluções. A ausência é verificada pela existência de faturamento, sem compensar compras com devoluções.</p><p>Propostas: posição atual em elaboração (status 1), sem pedido vinculado e com os demais critérios comerciais da consulta de propostas. Valores correspondem aos itens líquidos da categoria selecionada, para conferir com o detalhamento.</p><p>Último pedido: data de inclusão mais recente de pedido não cancelado dentro do escopo comercial, na categoria selecionada. Propostas e último pedido mostram a posição atual, mesmo quando o ano-base é anterior.</p><p>Peças ou implementos filtram tanto a atividade de compra quanto as propostas e o último pedido. No modo de dois anos sem compras, o ano anterior deixa de compor o período de compras históricas.</p></div></details>
+      {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800">{error}</p>}
+      {loading && <div role="status" className="rounded-2xl border bg-white p-10 text-center"><RefreshCw className="mx-auto mb-3 size-7 animate-spin text-[#008ad0]" />Consolidando o histórico de faturamento dos grupos…<p className="mt-2 text-sm text-[#71728a]">A consulta de vários anos pode levar alguns instantes.</p></div>}
+      {!data && !loading && !error && <div className="rounded-2xl border border-dashed border-[#cfd3e4] p-10 text-center text-[#62637b]"><Users className="mx-auto mb-3 size-8 text-[#008ad0]" />Defina o período e clique em Analisar clientes.</div>}
+      {data && <>
+        <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-[#71728a]">Imprime todos os grupos da busca, incluindo outras páginas e as unidades dos grupos expandidos.</p><Button variant="outline" disabled={printingReport || loading} onClick={() => void printReport()} title="Escolha uma impressora ou Salvar como PDF"><Printer className="size-4" />{printingReport ? 'Preparando impressão…' : 'Imprimir / Salvar PDF'}</Button></div>
+        {reportPrintError && <p role="alert" className="text-sm text-red-800">{reportPrintError}</p>}
+        <div className="rounded-xl bg-[#e9f5fc] px-5 py-4 text-sm text-[#24607e]"><strong>{({ all: 'Geral', pecas: 'Peças', implementos: 'Implementos' } as Record<string, string>)[data.filters.category]}</strong> · Comprou de {day(data.period.historyStart)} a {day(data.period.historyEnd)} · Sem faturamento de {day(data.period.inactiveStart)} a {day(data.period.inactiveEnd)}<p className="mt-1 text-xs">Consulta concluída em {new Date(data.generatedAt).toLocaleString('pt-BR')}</p></div>
+        <div className="grid gap-3 md:grid-cols-3">{[['Grupos sem compras', number(data.groups.length)], ['Propostas em elaboração', number(data.groups.reduce((s, g) => s + g.proposalCount, 0))], ['Valor líquido das propostas', money(data.groups.reduce((s, g) => s + g.proposalValue, 0))]].map(([label, value]) => <div key={label} className="rounded-xl border border-[#ddddeb] bg-white p-5"><p className="text-xs text-[#71728a]">{label}</p><p className="mt-2 text-2xl font-semibold">{value}</p></div>)}</div>
+        <section className="overflow-hidden rounded-2xl border border-[#ddddeb] bg-white">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b p-5"><div><h3 className="font-semibold">Grupos que deixaram de comprar</h3><p className="mt-1 text-xs text-[#71728a]">{number(groups.length)} grupos · expanda para ver as unidades/filiais</p></div><label className="flex items-center gap-2 rounded-lg border px-3"><Search className="size-4 text-[#71728a]" /><input aria-label="Buscar grupo, unidade, código ou CNPJ" placeholder="Grupo, unidade, código ou CNPJ" value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} className="w-64 py-2 text-sm outline-none" /></label></div>
+          <div className="overflow-x-auto"><table className="w-full"><thead className="bg-[#f7f9fc]"><tr><th className={th}>Grupo</th><th className={`${th} text-right`}>Propostas qtd.</th><th className={`${th} text-right`}>R$ propostas</th><th className={th}>Último pedido</th><th className={th}>Último faturamento</th><th className={th}><span className="sr-only">Atenção exclusiva</span></th></tr></thead><tbody>
+            {groups.slice(page * 25, (page + 1) * 25).map(g => <Fragment key={g.id}><tr className="border-t"><td className={td}><button onClick={() => toggle(g.id)} aria-expanded={expanded.has(g.id)} className="flex items-center gap-2 text-left font-semibold text-[#312d5e]">{expanded.has(g.id) ? <ChevronDown className="size-4 shrink-0" /> : <ChevronRight className="size-4 shrink-0" />}<span>{g.name}<span className="mt-1 block text-xs font-normal text-[#71728a]">{g.members.length} unidade(s)</span></span></button></td><td className={`${td} text-right tabular-nums`}><button disabled={!g.proposalCount} aria-label={`Ver propostas do grupo ${g.name}`} onClick={() => openPanel(g)} className="font-semibold text-[#008ad0] underline underline-offset-4 disabled:text-[#71728a] disabled:no-underline">{number(g.proposalCount)}</button></td><td className={`${td} whitespace-nowrap text-right tabular-nums`}>{money(g.proposalValue)}</td><td className={`${td} whitespace-nowrap`}>{day(g.lastOrder)}</td><td className={`${td} whitespace-nowrap`}>{day(g.lastSale)}</td><td className={td}>{g.hasBaseYearOrder && <span tabIndex={0} role="img" aria-label={`Atenção exclusiva: possui pedido em ${data.filters.baseYear}`} title={`Atenção exclusiva: possui pedido em ${data.filters.baseYear}`} className="inline-flex rounded-full bg-amber-100 p-2 text-amber-600"><Lightbulb aria-hidden="true" className="size-5 fill-amber-300" /></span>}</td></tr>{expanded.has(g.id) && <tr><td colSpan={6} className="bg-[#f4f8fc] p-4"><Units key={`${data.generatedAt}-${g.id}`} units={g.members} onOpen={unit => openPanel(g, unit)} /></td></tr>}</Fragment>)}
+            {!groups.length && <tr><td colSpan={6} className="p-10 text-center text-sm text-[#71728a]">Nenhum grupo encontrado com estes critérios.</td></tr>}
+          </tbody></table></div><Pages page={page} count={groups.length} size={25} onChange={setPage} />
+        </section>
+      </>}
     </div>
-  </section>;
+    <Sheet open={panel !== null} onOpenChange={open => { if (!open) setPanel(null); }}>
+      <SheetContent showCloseButton={false} finalFocus={opener} className="data-[side=right]:w-full data-[side=right]:sm:max-w-[850px] gap-0 bg-white">
+        {panel && data && <ProposalPanel key={`${data.generatedAt}-${panel.group.id}-${panel.unit?.id ?? 'all'}`} target={panel} filters={data.filters} cache={detailCache.current} />}
+      </SheetContent>
+    </Sheet>
+  </main>;
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
-  return <div><p className="text-sm text-[#686980]">{label}</p><p className="mt-1 font-semibold">{value}</p></div>;
+function Units({ units, onOpen }: { units: Unit[]; onOpen: (unit: Unit) => void }) {
+  const [page, setPage] = useState(0);
+  return <div className="overflow-hidden rounded-xl border bg-white"><p className="border-b px-4 py-3 text-sm font-semibold">Unidades / filiais do grupo</p><div className="overflow-x-auto"><table className="w-full"><thead><tr>{['Código / unidade', 'CNPJ', 'Propostas qtd.', 'R$ propostas', 'Último pedido'].map(t => <th key={t} className={th}>{t}</th>)}</tr></thead><tbody>{units.slice(page * 25, (page + 1) * 25).map(u => <tr key={u.id} className="border-t"><td className={td}><button aria-label={`Propostas de ${u.nome}`} disabled={!u.proposalCount} onClick={() => onOpen(u)} className="flex items-center gap-2 text-left disabled:cursor-default">{u.proposalCount > 0 && <ChevronRight className="size-4 shrink-0" />}<span><span className="block text-xs text-[#008ad0]">{u.codigo}</span>{u.nome}</span></button></td><td className={`${td} whitespace-nowrap`}>{u.documento || 'Não informado'}</td><td className={td}><button disabled={!u.proposalCount} aria-label={`Ver ${u.proposalCount} propostas de ${u.nome}`} onClick={() => onOpen(u)} className="font-semibold text-[#008ad0] underline underline-offset-4 disabled:text-[#71728a] disabled:no-underline">{number(u.proposalCount)}</button></td><td className={`${td} whitespace-nowrap`}>{money(u.proposalValue)}</td><td className={`${td} whitespace-nowrap`}>{day(u.lastOrder)}</td></tr>)}</tbody></table></div><Pages page={page} count={units.length} size={25} onChange={setPage} /></div>;
+}
+
+function cached<T>(cache: DetailCache, url: string): Promise<T> {
+  let promise = cache.get(url);
+  if (!promise) {
+    promise = read<T>(url).catch(error => { cache.delete(url); throw error; });
+    cache.set(url, promise);
+  }
+  return promise as Promise<T>;
+}
+
+function ProposalPanel({ target, filters, cache }: { target: PanelTarget; filters: Filters; cache: DetailCache }) {
+  const [proposals, setProposals] = useState<ListedProposal[] | null>(null);
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [page, setPage] = useState(0);
+  const [search, setSearch] = useState('');
+  const listScroll = useRef<HTMLDivElement>(null);
+  const [printing, setPrinting] = useState(false);
+  const [printError, setPrintError] = useState('');
+  useEffect(() => {
+    let active = true;
+    setError(''); setProposals(null);
+    async function load() {
+      const units = target.unit ? [target.unit] : target.group.members.filter(u => u.proposalCount > 0);
+      const rows: ListedProposal[] = [];
+      // Bound concurrent ERP reads when opening a whole group.
+      for (let i = 0; i < units.length; i += 4) {
+        if (!active) return;
+        const batch = await Promise.all(units.slice(i, i + 4).map(async unit => {
+          const data = await cached<{ proposals: Proposal[] }>(cache, `/api/portfolio?${query(filters, { action: 'proposals', personId: String(unit.id) })}`);
+          return data.proposals.map(p => ({ ...p, unit }));
+        }));
+        rows.push(...batch.flat());
+      }
+      if (active) setProposals(rows.sort((a, b) => b.data.localeCompare(a.data) || b.id - a.id));
+    }
+    void load().catch(e => { if (active) setError(e.message); });
+    return () => { active = false; };
+  }, [target, filters, cache, attempt]);
+  const term = normalize(search.trim());
+  const rows = (proposals ?? []).filter(p => !term || normalize(`${p.numero} ${p.unit.nome} ${p.unit.codigo}`).includes(term));
+  const index = rows.findIndex(p => p.id === selected);
+  const current = index >= 0 ? rows[index] : null;
+  async function printPanel() {
+    setPrinting(true); setPrintError('');
+    try {
+      const chosen = current ? [current] : rows;
+      const printed: PrintableProposal[] = [];
+      for (let i = 0; i < chosen.length; i += 4) {
+        const batch = await Promise.all(chosen.slice(i, i + 4).map(async proposal => {
+          const result = await cached<{ items: Product[] }>(cache, `/api/portfolio?${query(filters, { action: 'products', proposalId: String(proposal.id), personId: String(proposal.unit.id) })}`);
+          return { ...proposal, items: result.items };
+        }));
+        printed.push(...batch);
+      }
+      const user = await read<{ login?: string }>('/api/me').catch(() => null);
+      await printProposalDocument(proposalPrintHtml({ group: target.group.name, category: ({ all: 'Geral', pecas: 'Peças', implementos: 'Implementos' } as Record<string,string>)[filters.category], years: filters.years, baseYear: filters.baseYear, mode: filters.mode === 'base' ? 'No ano-base' : 'No ano-base e no ano anterior', search: current ? '' : search.trim(), login: user?.login || 'Não identificado (sem autenticação Windows)', printedAt: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }), logo: new URL('/logo-dmb.jpg', window.location.origin).href, proposals: printed }));
+    } catch (e) { setPrintError(e instanceof Error ? e.message : 'Não foi possível preparar a impressão.'); }
+    finally { setPrinting(false); }
+  }
+
+  return <>
+    <SheetHeader className="border-b p-5">
+      <div className="flex items-start justify-between gap-3"><div><SheetTitle>Conferir propostas</SheetTitle><SheetDescription>Sua pesquisa permanece aberta. Feche o painel para continuar de onde parou.</SheetDescription></div><SheetClose render={<Button variant="outline" />}>Fechar</SheetClose></div>
+      <div className="mt-3"><Button variant="outline" disabled={printing || !proposals || !rows.length || !!error} onClick={() => void printPanel()} title="Escolha uma impressora ou Salvar como PDF"><Printer className="size-4" />{printing ? 'Preparando impressão…' : 'Imprimir / Salvar PDF'}</Button><p className="mt-2 text-xs text-[#71728a]">{current ? 'Imprime esta proposta e todos os seus produtos.' : 'Imprime todas as propostas da busca e seus produtos, incluindo outras páginas.'}</p>{printError && <p role="alert" className="mt-2 text-sm text-red-800">{printError}</p>}</div>
+      <nav aria-label="Caminho da proposta" className="mt-4 flex flex-wrap items-center gap-1 text-sm text-[#62637b]"><button className="font-semibold text-[#312d5e]" onClick={() => setSelected(null)}>{target.group.name}</button><ChevronRight className="size-3" /><span>{current?.unit.nome ?? target.unit?.nome ?? 'Todas as unidades'}</span>{current && <><ChevronRight className="size-3" /><strong>{current.numero}</strong></>}</nav>
+      <p className="mt-2 text-xs text-[#71728a]">{({ all: 'Geral', pecas: 'Peças', implementos: 'Implementos' } as Record<string, string>)[filters.category]} · Em elaboração · Valores líquidos dos itens</p>
+    </SheetHeader>
+    <div ref={listScroll} hidden={current !== null} className="min-h-0 flex-1 overflow-y-auto">
+      <div className="border-b p-4"><label className="text-sm">Buscar proposta ou unidade<input value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} className={inputClass} placeholder="Número, unidade ou código" /></label>{proposals && <p className="mt-2 text-xs text-[#71728a]">{number(rows.length)} propostas · {money(rows.reduce((s, p) => s + p.valor, 0))}</p>}</div>
+      {error ? <div role="alert" className="p-4 text-red-800">{error}<Button variant="outline" onClick={() => setAttempt(a => a + 1)}>Tentar novamente</Button></div> : !proposals ? <p role="status" className="p-5">Carregando propostas…</p> : <>
+        <div className="overflow-x-auto"><table className="w-full"><thead className="bg-[#f7f9fc]"><tr>{['Proposta / unidade', 'Data', 'Situação', 'Valor'].map(t => <th key={t} className={th}>{t}</th>)}</tr></thead><tbody>{rows.slice(page * 20, (page + 1) * 20).map(p => <Fragment key={p.id}><tr className="border-t"><td className={td}><button onClick={() => setSelected(p.id)} aria-label={`Conferir proposta ${p.numero}`} className="font-semibold text-[#008ad0] underline underline-offset-4">{p.numero}</button><span className="mt-1 block text-xs text-[#71728a]">{p.unit.codigo} · {p.unit.nome}</span></td><td className={`${td} whitespace-nowrap`}>{day(p.data)}</td><td className={td}>Em elaboração</td><td className={`${td} whitespace-nowrap`}>{money(p.valor)}</td></tr><tr><td colSpan={4} className="bg-[#f7fafd] px-4 pb-4"><Products proposal={p} filters={filters} cache={cache} compact /></td></tr></Fragment>)}</tbody></table></div>
+        {!rows.length && <p className="p-5 text-sm">Nenhuma proposta nesta seleção.</p>}
+        <Pages page={page} count={rows.length} size={20} onChange={setPage} />
+      </>}
+    </div>
+    {current && <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b p-4"><Button variant="outline" onClick={() => setSelected(null)}><ArrowLeft className="size-4" />Voltar às propostas</Button><div className="flex items-center gap-2"><Button variant="outline" disabled={index <= 0} onClick={() => setSelected(rows[index - 1].id)}>Anterior</Button><span className="text-xs">{index + 1} de {rows.length}</span><Button variant="outline" disabled={index + 1 >= rows.length} onClick={() => setSelected(rows[index + 1].id)}>Próxima</Button></div></div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-4" key={current.id}><div className="mb-4 rounded-xl bg-[#f0f7fc] p-4"><h3 className="font-semibold">{current.numero}</h3><p className="mt-1 text-sm">{day(current.data)} · Em elaboração · {money(current.valor)}</p><p className="mt-2 text-xs text-[#62637b]">{current.unit.nome} · CNPJ: {current.unit.documento || 'Não informado'}</p></div><Products proposal={current} filters={filters} cache={cache} /></div>
+    </div>}
+  </>;
+}
+
+function Products({ proposal, filters, cache, compact = false }: { proposal: ListedProposal; filters: Filters; cache: DetailCache; compact?: boolean }) {
+  const [data, setData] = useState<{ items: Product[] } | null>(null);
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  const [page, setPage] = useState(0);
+  useEffect(() => {
+    let active = true;
+    const url = `/api/portfolio?${query(filters, { action: 'products', proposalId: String(proposal.id), personId: String(proposal.unit.id) })}`;
+    setError('');
+    void cached<{ items: Product[] }>(cache, url).then(d => { if (active) setData(d); }).catch(e => { if (active) setError(e.message); });
+    return () => { active = false; };
+  }, [proposal, filters, cache, attempt]);
+  if (error) return <div role="alert">{error}<Button variant="outline" onClick={() => setAttempt(a => a + 1)}>Tentar novamente</Button></div>;
+  if (!data) return <p role="status" className="py-2 text-xs text-[#71728a]">Carregando produtos…</p>;
+  if (compact) return <div className="border-l-2 border-[#b6dff2] pl-3"><p className="py-2 text-xs font-semibold text-[#62637b]">Produtos</p><ul className="space-y-2">{data.items.slice(page * 25, (page + 1) * 25).map(p => <li key={p.id} className="flex items-start justify-between gap-4 text-sm"><div><span className="block text-xs font-medium text-[#008ad0]">{p.codigo}</span><span className="whitespace-normal">{p.nome}</span></div><span className="shrink-0 whitespace-nowrap text-xs text-[#62637b]">Qtd.: {number(p.quantidade)}</span></li>)}</ul>{!data.items.length && <p className="text-xs text-[#71728a]">Nenhum produto disponível neste filtro.</p>}{data.items.length > 25 && <Pages page={page} count={data.items.length} size={25} onChange={setPage} />}</div>;
+  return <div className="overflow-hidden rounded-lg border bg-white"><p className="px-4 py-3 text-sm font-semibold">Produtos da proposta {proposal.numero}</p><div className="overflow-x-auto"><table className="w-full"><thead><tr>{['Código / produto', 'Quantidade', 'Valor líquido'].map(t => <th key={t} className={th}>{t}</th>)}</tr></thead><tbody>{data.items.slice(page * 25, (page + 1) * 25).map(p => <tr key={p.id} className="border-t"><td className={td}><span className="block text-xs text-[#008ad0]">{p.codigo}</span>{p.nome}<span className="block text-xs text-[#71728a]">{p.familia}</span></td><td className={td}>{number(p.quantidade)}</td><td className={`${td} whitespace-nowrap`}>{money(p.valor)}</td></tr>)}</tbody></table></div>{!data.items.length && <p className="p-4 text-sm">Nenhum produto disponível neste filtro. A proposta pode ter sido atualizada.</p>}<Pages page={page} count={data.items.length} size={25} onChange={setPage} /></div>;
 }

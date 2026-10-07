@@ -1,46 +1,59 @@
-# Carteira inteligente — primeira versão local
+# Análise de clientes por grupo — Carteira inteligente
 
-**Fora do pacote de atualização por decisão do usuário.** A experiência e as métricas continuam em avaliação local. Não reincluir sem nova autorização.
+A tela `/carteira` foi reformulada em 06/10/2026. Substitui na interface o experimento de alertas, pontuação e acompanhamentos por uma análise de grupos que compraram e deixaram de comprar. O monitor antigo não inicia mais com a API. Seus módulos e registros anteriores são preservados; não há escrita no ERP.
 
-`scripts/build-iis.mjs` prepara uma cópia isolada em `outputs/release-source-*`, sem a rota `/carteira`, seus links, imports, endpoints e monitor da API. O desenvolvimento local permanece intacto. O resultado aprovado é apontado por `outputs/release-build.json`; `package-release.py` exige esse resultado e verifica a ausência da funcionalidade antes de gerar o ZIP. Não usa o build experimental anterior em `dist/standalone` da raiz. Os módulos e o banco de acompanhamentos não entram no pacote.
+## Filtros e períodos
 
-Acesse `/carteira` ou o menu **Carteira inteligente**. A análise cobre todos os grupos, sem recorte automático por vendedor. O responsável informado no acompanhamento não representa atribuição oficial de carteira nem autenticação.
+- Período de análise: 1 a 50 anos; padrão 10.
+- Ano-base: editável, padrão ano vigente; não aceita anos futuros.
+- Sem faturamento no ano-base (padrão): para 10 anos / 2026, exige faturamento entre 01/01/2016 e 31/12/2025 e nenhum faturamento entre 01/01/2026 e hoje.
+- Sem faturamento no ano-base e no ano anterior: no mesmo exemplo, histórico comprador entre 01/01/2016 e 31/12/2024; ausência entre 01/01/2025 e hoje. Requer ao menos 2 anos de período.
+- Para ano-base passado, a ausência cobre até 31/12 daquele ano.
+- Geral, peças e implementos. A categoria afeta faturamento, propostas e último pedido. Um grupo pode estar inativo em implementos e ativo em peças.
 
-## Fonte e agrupamento
+## Consolidação e valores
 
-O ERP é consultado somente para leitura, pela mesma conexão da API. A análise diária por pessoa/categoria reaproveita o escopo fiscal de `DETAILS`. Valores representam faturamento antes das devoluções. Considera 24 meses completos mais o mês corrente; o gráfico exibe 12 meses completos.
+Usa vínculos transitivos atuais por raiz de CNPJ, grupo empresarial e nome de grupo; CPF não é unido por raiz. Compra em qualquer integrante exclui todo o grupo da lista de inativos. Grupos com histórico e nenhuma proposta também aparecem, com quantidade e valor zero.
 
-Empresas são consolidadas transitivamente por raiz de CNPJ de 14 dígitos, `GRUPOEMPRESARIAL` positivo e `K_NOMEGRUPO` não vazio, sem distinção de acentos/maiúsculas. CPF e campos vazios não criam vínculos por raiz. O cadastro atual é aplicado retroativamente; mudanças de grupo exigem revisar a continuidade dos acompanhamentos, cuja chave é o menor HANDLE do grupo.
+Faturamento reutiliza o escopo fiscal de `DETAILS`. Ausência significa nenhuma ocorrência de faturamento elegível; devoluções não anulam a existência de compra.
 
-## Regras iniciais para calibração
+Propostas seguem `OPEN_PROPOSALS`: status 1 (Em elaboração), sem pedido vinculado, original nulo e demais condições comerciais existentes. Contagem distinta por proposta; valor é a soma líquida dos itens da categoria, compatível com o detalhamento. Não representa o total de cabeçalho com impostos.
 
-- Propostas: pelo menos uma proposta aberta criada nos últimos 365 dias, nenhum novo pedido válido/faturamento nos últimos 90 dias e nenhum pedido aberto. As regras de proposta aberta são as mesmas do relatório. Valores exibidos incluem o histórico de propostas abertas e não equivalem a venda provável.
-- Recompra: pelo menos cinco dias distintos de faturamento positivo no último ano. Limite de atraso = maior entre 14 dias, 1,5 × intervalo mediano e mediana + 3 × desvio absoluto mediano. Não sinaliza quando há pedido em aberto ou pedido recente dentro desse limite. Intervalos muito irregulares não geram o sinal.
-- Queda: três meses completos contra os três anteriores, redução mínima de R$ 1.000 e base de pelo menos R$ 1.000. Exige três meses com faturamento positivo no histórico de referência. Limite relativo entre 30% e 60%, calculado pelo desvio absoluto mediano dividido pela mediana dos nove meses anteriores ao trimestre recente. Com base sazonal positiva, exige também queda de 20% contra os mesmos três meses do ano anterior. Sem essa base, reduz a prioridade e explicita a incerteza.
-- Categorias: pelo menos R$ 1.000 e três meses de compras positivas no histórico anterior aos últimos 90 dias, nenhuma compra da categoria nos últimos 90 dias, com outra categoria ainda ativa. Considera peças, implementos, serviços e outros; não equivale ainda a análise por família ou produto. Pedidos em aberto são apresentados para verificação humana.
+Último pedido: maior data de inclusão de pedido não cancelado na categoria, mantendo os demais critérios de `OPEN_ORDERS`. Propostas e último pedido mostram a posição atual, inclusive se o ano-base é passado. Faturamento é histórico.
 
-- Inatividade prolongada: pelo menos 180 dias desde o último faturamento positivo, R$ 1.000 de faturamento no histórico disponível, sem pedido válido nos últimos 90 dias ou em aberto. Não exige recorrência; o vendedor deve confirmar compras pontuais e sazonalidade. Continua detectando o grupo quando ambos os trimestres estão zerados ou a compra saiu da janela de 12 meses, até o limite de 24 meses completos mais o mês corrente da fonte.
+## Fluxo e desempenho
 
-Prioridade é uma heurística explicável, não probabilidade de perda: propostas 65 pontos; recompra 50 + razão entre atraso e limite × 10, até 85; queda 75 com base sazonal ou 55 sem ela; categorias 55; inatividade 75. Usa o maior sinal e soma 5 por motivo adicional. Inatividade e recompra são um único motivo, para não contar o mesmo problema duas vezes. Acrescenta 10 pontos quando o faturamento no histórico disponível é de pelo menos R$ 100 mil, ou 15 a partir de R$ 500 mil. Não acrescenta pontos financeiros sem sinais e não usa valores de propostas para esse adicional. Limite de 100; Alta a partir de 75. Faixas iniciais para calibração comercial.
+Consulta manual em Analisar clientes; nenhuma carga pesada automática na abertura. Resumo agregado por pessoa no SQL e consolidado por grupo em Python. Filiais vêm no resumo; propostas e produtos carregam sob demanda. Paginação nos quatro níveis. Ao alterar filtros, clique em Analisar clientes; resultados e detalhamentos sempre usam os filtros da última análise concluída, indicados acima da tabela.
 
-A tela resume o motivo principal e a próxima ação sugerida; evidências e critérios ficam recolhidos. Ordenação padrão: prazo vencido, pontuação e valor de referência (maior valor entre os sinais, sem somá-los). O valor de referência serve para ordenar; não é previsão de receita perdida. Os valores antigos de propostas ainda entram nesse último desempate, sem representar probabilidade de conversão.
+API: `GET /api/portfolio?years=10&baseYear=2026&category=implementos&mode=base`. Detalhes usam `action=proposals&personId=...` ou `action=products&personId=...&proposalId=...`, preservando filtros. Validação de parâmetros e IDs vinculados, SQL parametrizado. Erros de detalhes permitem nova tentativa.
 
-## Monitoramento e acompanhamento
+## Validação e publicação
 
-A API inicia um monitor em segundo plano, que recalcula a carteira a cada 15 minutos após a conclusão da leitura anterior. Reutiliza a análise entre abas e usuários; há timeout de 90 segundos por consulta SQL. A página consulta o resultado a cada 15 segundos enquanto visível. Falhas mantêm a última análise com aviso de desatualização. O botão Consultar relê o resultado disponível, sem disparar outra consulta pesada ao ERP.
+Testes em `backend/test_portfolio_analysis.py`: limites anuais, ano passado, parâmetros inválidos, compra em filial vinculada, soma de grupos e unidades sem histórico, filtros de status/categoria e IDs parametrizados. TypeScript e suíte de backend também verificados.
 
-As notificações são internas à tela: novo sinal/prioridade, prazo atingido e vencimento. Não há envio por e-mail/WhatsApp, divisão automática por vendedor, modelo preditivo treinado ou execução enquanto a API estiver desligada.
+Publicação da Carteira autorizada em 06/10/2026 para V.01.006. O pacote passa a incluir a tela e os módulos portfolio.py (funções de agrupamento) e portfolio_analysis.py; o monitor legado permanece inativo.
 
-Registros ficam em `outputs/portfolio-actions.sqlite3`, fora do ERP. Configure `PULSO_PORTFOLIO_DB` para escolher outro caminho persistente e inclua-o no backup. Não copie essa base para pacotes de aplicação. A API precisa de permissão de escrita nesse caminho. Cada registro é acrescentado ao histórico; a tela mostra o mais recente por grupo. Nesta versão, o acompanhamento é renovado com uma próxima data; não há fluxo de encerramento definitivo.
+## Consulta lateral de propostas
 
-Um acompanhamento futuro suspende a fila até o dia marcado. Novo tipo de sinal ou aumento de pelo menos 15 pontos reabre a atenção. O vencimento é calculado pela data atual mesmo antes do próximo recálculo. Sem sinais, o grupo acompanhado fica em “Sem sinais atuais”; ao chegar a data, volta para revisão, sem afirmar recuperação automaticamente.
+Clique na quantidade de propostas do grupo ou da unidade para abrir o painel lateral. A lista exibe número, unidade, data, situação e valor; o número abre os produtos. Anterior/Próxima percorrem a lista filtrada; Voltar às propostas preserva a busca, a página e a lista montada. Fechar ou Escape retorna à pesquisa principal, que permanece montada com seus filtros, página, grupos expandidos e rolagem.
 
-## Validação
+Detalhes são reaproveitados em memória durante a análise. Uma nova análise limpa esse cache. A consulta de um grupo reúne suas unidades em lotes de até quatro chamadas simultâneas. Falhas permitem tentar novamente.
 
-`python -m unittest discover -s backend -p 'test_*.py'`
+Publicação V.01.006 concluída em 06/10/2026 às 14:34:29, com tela e consulta da Carteira verificadas no servidor. Log: `outputs/publicacao-20261006-143002-4e7b61e4.log`.
 
-`node node_modules/typescript/bin/tsc --noEmit`
+## Visão do grupo — painel executivo local (06/10/2026)
 
-`node scripts/build-iis.mjs`
+Nova rota `/carteira/grupo`, acessível pelas abas da Carteira inteligente. Grupo estritamente por `GN_PESSOAS.GRUPOEMPRESARIAL` -> `GN_GRUPOSEMPRESARIAIS.HANDLE`; sem grupo válido usa pessoa individual. Unidade/filial refere-se ao cliente. Vendedor usa `AGENTEVENDAS` em cada documento. Seleção por nome, apelido de grupo, código ou CNPJ.
 
-Os testes cobrem vínculos transitivos, isolamento de CPF, transferência entre filiais, sazonalidade, mês incompleto, histórico insuficiente, proteção por pedidos, propostas antigas e persistência/reabertura de acompanhamentos. A nova consulta também foi comparada ao relatório existente para um grupo real com duas empresas, com valores iguais no trimestre.
+Períodos móveis 3/6/12/24/36/60 meses e intervalo personalizado. Receita, ticket por nota, produtos, mês de pico e descontos seguem o período. Pedidos/propostas abertos representam a posição atual. Últimos eventos e intervalos entre dias distintos de faturamento positivo usam todo o histórico disponível até hoje. Propostas abertas: somente status 1, originais, sem pedido vinculado, critérios compartilhados da aplicação. Última proposta cadastrada considera qualquer situação, explicitado na tela.
+
+Desconto comercial: percentual `CM_ORDEMVENDAITENS.K_NEGOCIACAO`, média por produto ponderada por quantidade; maior desconto do período e maior histórico separados. Valores fora de 0–100 e quantidade não positiva não compõem esse cálculo.
+
+Recebimento: parcelas diretamente ligadas à nota ou ao título `DOCUMENTOORIGEM`, sem duplicar parcela entre notas; emissão fiscal até liquidação integral, ponderada pelo valor da parcela. Exclui canceladas; inclui compensações. Se várias notas compartilham parcela, usa a menor emissão das notas selecionadas. Não mede recebimentos parciais nem prazo contratual. Conferido com BP: 347 parcelas, 52,4 dias na consulta de 12 meses em 06/10/2026.
+
+Produtos novos: primeira compra no histórico disponível dentro da janela configurável de 1–24 meses terminando na data final. Sem recompra: compras em pelo menos três meses distintos dos 12 meses anteriores à janela, sem compra na janela. Preços usam líquido por quantidade; faturamento inclui adicionais, antes das devoluções, no mesmo escopo fiscal vigente (filial fiscal 1). Recorrência usa pedidos vinculados às notas; notas sem vínculo aparecem na receita e são informadas na tela.
+
+Validação: 53 testes Python, TypeScript, build IIS, 12 cenários simulados de atualização/rollback, API real e navegador. Somente ambiente local; ainda não publicado.
+
+
+Ajuste de 06/10/2026: a Visão do grupo reutiliza `portfolio.group_clients`, exatamente como Clientes que deixaram de comprar, substituindo o agrupamento estrito descrito anteriormente. Busca, unidades e indicadores usam os vínculos existentes de grupo empresarial, K_NOMEGRUPO e raiz de CNPJ.

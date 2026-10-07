@@ -97,7 +97,7 @@ try {
         $seen = @{}
         foreach ($entry in $zip.Entries) {
             $name = $entry.FullName
-            if ($name -notmatch '^(release\.json|dist/standalone/[^:]+|backend/(server|queries|usage|portfolio|portfolio_actions)\.py|scripts/start-iis\.mjs)$' -or
+            if ($name -notmatch '^(release\.json|dist/standalone/[^:]+|backend/(server|queries|usage|portfolio|portfolio_actions|portfolio_analysis|group_dashboard)\.py|scripts/start-iis\.mjs)$' -or
                 $name.Contains('\') -or $name -match '(^|/)\.\.?(/|$)' -or $seen.ContainsKey($name) -or $name.EndsWith('/')) {
                 throw "Entrada inesperada no ZIP: $name"
             }
@@ -117,8 +117,10 @@ try {
     }
     if ($manifestPaths.Count -ne $seen.Count - 1) { throw 'ZIP possui arquivos sem hash.' }
     $targets = @('dist/standalone', 'backend/server.py', 'backend/queries.py', 'scripts/start-iis.mjs')
-    $newModules = @('backend/portfolio.py', 'backend/portfolio_actions.py', 'backend/usage.py')
-    if ($seen.ContainsKey($newModules[0]) -xor $seen.ContainsKey($newModules[1])) { throw 'Modulos da carteira incompletos.' }
+    $newModules = @('backend/portfolio.py', 'backend/portfolio_actions.py', 'backend/usage.py', 'backend/portfolio_analysis.py', 'backend/group_dashboard.py')
+    if ($seen.ContainsKey('backend/portfolio_analysis.py')) {
+        if (-not $seen.ContainsKey('backend/portfolio.py')) { throw 'Modulos da carteira incompletos.' }
+    } elseif ($seen.ContainsKey($newModules[0]) -xor $seen.ContainsKey($newModules[1])) { throw 'Modulos da carteira incompletos.' }
     $targets += @($newModules | Where-Object { $seen.ContainsKey($_) })
     foreach ($required in @('dist/standalone/server.js', 'dist/standalone/package.json', 'backend/server.py', 'backend/queries.py', 'scripts/start-iis.mjs')) {
         if (-not (Test-Path -LiteralPath (Safe-Child $stage $required) -PathType Leaf)) { throw "Pacote incompleto: $required" }

@@ -1,5 +1,43 @@
 # Próxima atualização de produção
 
+## Publicado — V.01.008 (07/10/2026)
+
+Corrigida a navegação das abas da Carteira: links HTML diretos substituem o Link do roteador para abrir a Visão do grupo. Publicado às 07:10:12, pacote `20261007T100655758136Z`, backup `C:\Pulso\Atualizacoes\20261007-070839-4aee24a0\backup`. Testes da API (53), gráfico (4), TypeScript e compilação aprovados. Conferência no servidor: Carteira 509 grupos; Visão do grupo BP 12 unidades. Navegador automatizado sem autenticação Windows disponível; abertura direta e consulta confirmadas pelo processo remoto.
+
+## Publicado — V.01.007 (06/10/2026)
+
+Publicados Visão do grupo com filtros Geral/Peças/Implementos e impressão/PDF, impressão da Carteira/painel de propostas e lâmpada de atenção para pedidos no ano-base. Pacote final `20261006T192447292535Z`, aplicado às 16:26:39; backup `C:\Pulso\Atualizacoes\20261006-162518-5f9bc2da\backup`; log `outputs/publicacao-v01007-correcao.log`. A primeira aplicação encontrou falta de permissão em FN_PARCELAS: removida a consulta financeira do indicador que já havia sido retirado da tela, sem ampliar permissões. Reaplicado e confirmado: duas telas HTTP 200, consultas de Peças/Implementos, BP com 12 unidades, alertas BP falso/CMAA verdadeiro. Endereço público correto: HTTPS (HTTP porta 80 pertence ao site padrão do IIS). Este registro substitui os estados pendentes abaixo referentes a estes recursos.
+
+## Pendente — Visão do grupo
+
+Novo painel `/carteira/grupo` na Carteira inteligente, com grupo empresarial estrito, unidades do cliente, vendedor, período e janela de produtos. Cards executivos, atividade, frequência, gráfico mensal, produtos, descontos K_NEGOCIACAO e prazo de liquidação pelo vínculo financeiro DOCUMENTOORIGEM. Critérios detalhados em `docs/carteira-inteligente.md`. API `group_dashboard.py` incluída no preparo e validação de pacotes. Validado localmente com 53 testes, TypeScript, compilação e dados reais. Não publicado.
+
+## Pendente — impressão da Carteira e do painel de propostas
+
+Incluído Imprimir / Salvar PDF também na tela principal da Carteira: todos os grupos da busca, totais, períodos e unidades dos grupos expandidos, sem limitar à página atual. Incluído Imprimir / Salvar PDF na lista e no detalhe do painel. Lista imprime todas as propostas da busca e todos os produtos, independentemente da paginação; detalhe imprime apenas a proposta aberta. A4 retrato, logo DMB, data/hora de Brasília e usuário. Documento isolado da pesquisa, com carregamento completo antes de imprimir e erro explícito em falha. Validado TypeScript e geração com 60 produtos e caracteres especiais. Alteração local, ainda não publicada.
+
+## Publicado — V.01.006: Carteira inteligente e propostas
+
+Em 06/10/2026, usuário autorizou publicar os ajustes de pedidos/propostas e a nova Carteira inteligente, incluindo análise por grupo, filtro de status em elaboração, painel lateral e produtos abaixo das propostas. Removida a exclusão da Carteira no build/pacote; atualizador inclui portfolio.py e portfolio_analysis.py com backup/restauração. Publicada com sucesso em 06/10/2026 às 14:34:29. Pacote `20261006T173110367884Z`; log `outputs/publicacao-20261006-143002-4e7b61e4.log`; backup `C:\Pulso\Atualizacoes\20261006-143251-65c480f8\backup`. Interface e API verificadas; tela `/carteira` e consulta real confirmadas no servidor (510 grupos, histórico de 5 anos, ano-base 2026, implementos). Este registro substitui os apontamentos pendentes abaixo referentes às funcionalidades incluídas nesta versão.
+
+## Em validação local — painel lateral de propostas
+
+Adicionado painel lateral na análise de clientes por grupo. A lista também exibe automaticamente código, descrição e quantidade dos produtos abaixo de cada proposta, reaproveitando o cache do detalhamento. Acesso pela quantidade de propostas do grupo ou da filial; lista com número, unidade, data, situação e valor, produtos e navegação Anterior/Próxima. A pesquisa permanece montada ao consultar e fechar o painel. Detalhes reutilizados durante a análise, com limpeza ao analisar novamente. Validado no navegador com grupo BP e filial Tropical. Ainda não publicado.
+
+## Em validação local — nova análise de clientes por grupo
+
+Em 06/10/2026, reformulada a tela Carteira inteligente para histórico configurável em anos, ano-base editável, ausência de faturamento no ano-base (ou nele e no anterior) e categoria Geral/Peças/Implementos. Consolida grupos completos e permite expandir unidades, propostas em elaboração e produtos. Quantidade e valor líquido das propostas e último pedido aparecem no resumo; tabelas paginadas e detalhes sob demanda. Monitor e interface de alertas anteriores desativados, com módulos e registros preservados. Validada com 45 testes, TypeScript e dados reais, inclusive conciliação grupo/unidade/proposta/produtos. Permanece fora do pacote de produção até validação e autorização de publicação.
+
+## Pendente — propostas somente em elaboração
+
+Em 06/10/2026, a pedido do usuário, o filtro de propostas passa de `STATUSPROPOSTA NOT IN (3, 4)` para `STATUSPROPOSTA = 1` (Em elaboração). A consulta compartilhada aplica a regra aos totais, categorias e itens de propostas, preservando os demais critérios. Alteração local, ainda não publicada.
+
+## Pendente — expansão de clientes nos produtos de pedidos e propostas
+
+Correção de desempenho: tabelas de pedidos/propostas paginadas em 50 itens, evitando renderizar simultaneamente os cerca de 191 mil itens da consulta geral de propostas. Totais e filtros continuam considerando todos os itens; expansão de clientes permanece ativa ao navegar entre páginas.
+
+Em 06/10/2026, incluído “Expandir clientes de todos” / “Recolher clientes de todos” nas duas telas de produtos. Cada item de documento exibe seu cliente com código, nome, CNPJ e quantidade. A expansão acompanha os filtros de categoria, família e busca. Identificação obtida na própria consulta dos itens, pelo cliente do pedido ou da proposta, sem consultas individuais. Alteração local, ainda não publicada.
+
 ## Publicado — V.01.005: famílias, quantidades e comparação anual
 
 Usuário validou e autorizou publicar os ajustes de quantidades e seleção de família e o comparativo com ano anterior completo. Publicação concluída em 01/10/2026 às 16:35:07, com interface e API verificadas pelo atualizador. Pacote `20261001T193205879424Z`; log `outputs/publicacao-20261001-163108-4b1677f7.log`; backup `C:\Pulso\Atualizacoes\20261001-163340-3c6515b6\backup`.
@@ -86,3 +124,10 @@ Implementado em 23/09/2026: ontem, faturamento ontem, vendas ontem, acumulado on
 
 ## Pendente - periodos relativos padronizados
 Em 23/09/2026, incluidos mes passado e mes anterior (mes calendario completo), e ano anterior como sinonimo de ano passado. Hoje, ontem, este mes e este ano preservados. Aceita periodo sozinho, com faturamento/venda/acumulado ou cliente. Quinze testes passaram, com matriz de 180 combinacoes de periodos e prefixos, incluindo janeiro e fevereiro bissexto. Ano de referencia acompanha o inicio do mes anterior na virada de ano. Atualizacao local; publicacao pendente.
+
+
+Ajuste de 06/10/2026: a Visão do grupo reutiliza `portfolio.group_clients`, exatamente como Clientes que deixaram de comprar, substituindo o agrupamento estrito descrito anteriormente. Busca, unidades e indicadores usam os vínculos existentes de grupo empresarial, K_NOMEGRUPO e raiz de CNPJ.
+`nVisão do grupo simplificada a pedido do usuário: removidos filtro de vendedor, janela editável de produtos, ticket médio, prazo de recebimento, maior desconto do período, intervalos médio/máximo e destaque de maior desconto histórico. Produtos novos/sem recompra preservam a janela padrão de três meses indicada na tela; consulta considera todos os vendedores. TypeScript validado.
+Visão do grupo: filtro Geral/Peças/Implementos aplicado aos indicadores, atividade, produtos e descontos. Categorias reutilizam as famílias existentes; pedidos e propostas filtrados somam somente o líquido dos itens correspondentes. Validado TypeScript, 52 testes e consultas reais BP para ambas as categorias.
+Carteira: lâmpada amarela de Atenção exclusiva no final da linha quando qualquer unidade possui pedido não cancelado no ano-base selecionado, respeitando a categoria. Flag calculada independentemente da data do último pedido; incluída na impressão/PDF. Validado com 53 testes e TypeScript. Ainda local.
+Visão do grupo: incluído Imprimir / Salvar PDF com relatório A4 paisagem independente da tela, filtros da consulta, indicadores atuais, atividade, comportamento, série mensal tabulada, todos os produtos e ambas as listas de acompanhamento. Não limita à página nem à busca textual da tabela. Logo DMB, usuário e data/hora de Brasília. Indicadores removidos pelo usuário não reaparecem no relatório.

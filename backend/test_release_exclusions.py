@@ -9,27 +9,29 @@ release_source = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release_source)
 
 
-class ReleaseExclusionsTests(unittest.TestCase):
-    def test_release_api_has_no_portfolio_routes_or_worker(self):
+class ReleaseContentsTests(unittest.TestCase):
+    def test_release_includes_approved_portfolio_without_legacy_worker(self):
         original = (ROOT / 'backend/server.py').read_text(encoding='utf-8')
-        sanitized = release_source.release_server(original)
+        source = release_source.release_server(original)
         namespace = {'__name__': 'release_test'}
-        exec(compile(sanitized, 'release_server.py', 'exec'), namespace)
-        self.assertNotIn('portfolio_service', namespace)
-        for method, path in [('do_GET', '/api/portfolio'), ('do_POST', '/api/portfolio/actions')]:
-            handler = namespace['Handler'].__new__(namespace['Handler'])
-            handler.path = path
-            handler.send_json = Mock()
-            getattr(handler, method)()
-            self.assertEqual(handler.send_json.call_args.args[0], 404)
-        self.assertIn("'/api/ask'", sanitized)
-        self.assertIn("'/api/faturamento'", sanitized)
-        self.assertIn('portfolio_service.start()', original)
+        exec(compile(source, 'release_server.py', 'exec'), namespace)
+        service = namespace['portfolio_service']
+        service.get = Mock(return_value={'groups': []})
+        handler = namespace['Handler'].__new__(namespace['Handler'])
+        handler.path = '/api/portfolio?years=5&baseYear=2026'
+        handler.send_json = Mock()
+        handler.do_GET()
+        self.assertEqual(handler.send_json.call_args.args, (200, {'groups': []}))
+        service.get.assert_called_once_with({'years': ['5'], 'baseYear': ['2026']})
+        self.assertIn('portfolio_analysis.py', release_source.BACKEND_FILES)
+        self.assertIn('portfolio.py', release_source.BACKEND_FILES)
+        self.assertNotIn('portfolio_actions.py', release_source.BACKEND_FILES)
+        self.assertNotIn('portfolio_service.start()', source)
 
-    def test_unknown_portfolio_integration_blocks_release(self):
+    def test_legacy_worker_blocks_release(self):
         original = (ROOT / 'backend/server.py').read_text(encoding='utf-8')
         with self.assertRaises(ValueError):
-            release_source.release_server(original + '\n# new portfolio integration\n')
+            release_source.release_server(original + '\nportfolio_service.start()\n')
 
 
 if __name__ == '__main__':

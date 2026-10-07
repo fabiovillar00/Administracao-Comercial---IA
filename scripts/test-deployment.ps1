@@ -69,7 +69,7 @@ foreach ($case in @('absolute-launcher', 'wrong-launcher', 'validate', 'quoted-d
     }
     [IO.File]::WriteAllText((Join-Path $global:PulsoTest_app '.env'), 'PRESERVE')
     # New modules are absent in older installations; upgrade and rollback must both work.
-    foreach ($relative in @('backend/portfolio.py', 'backend/portfolio_actions.py', 'backend/usage.py')) {
+    foreach ($relative in @('backend/portfolio.py', 'backend/portfolio_analysis.py', 'backend/group_dashboard.py', 'backend/usage.py')) {
         $path = Join-Path $payload $relative
         [IO.File]::WriteAllText($path, 'NEW')
         $files += @{path = $relative; sha256 = (Get-FileHash -LiteralPath $path).Hash; newModule = $true}

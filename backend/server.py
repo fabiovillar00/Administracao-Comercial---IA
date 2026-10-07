@@ -10,8 +10,8 @@ from urllib.parse import parse_qs, urlparse
 
 import pyodbc
 import usage
-from portfolio import PortfolioService
-from portfolio_actions import save_action, with_actions
+from portfolio_analysis import PortfolioAnalysis
+from group_dashboard import GroupDashboard
 
 from queries import (
     BRANCH_SUMMARY,
@@ -61,7 +61,8 @@ def rows_as_dict(cursor):
     return [{key: serialize(value) for key, value in zip(columns, row)} for row in cursor.fetchall()]
 
 
-portfolio_service = PortfolioService(connection, rows_as_dict)
+portfolio_service = PortfolioAnalysis(connection, rows_as_dict)
+group_dashboard_service = GroupDashboard(connection, rows_as_dict)
 
 
 def find_clients(term):
@@ -495,11 +496,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(400, {'error': str(exc)})
                 except Exception:
                     return self.send_json(503, {'error': 'Histórico indisponível. Verifique o armazenamento de uso no servidor.'})
+            if parsed.path == '/api/group-dashboard':
+                try:
+                    return self.send_json(200, group_dashboard_service.get(params))
+                except (ValueError, TypeError) as exc:
+                    return self.send_json(400, {'error': str(exc)})
             if parsed.path == '/api/portfolio':
-                snapshot, error, refreshing = portfolio_service.get()
-                if snapshot is None:
-                    return self.send_json(503 if error else 202, {'loading': not bool(error), 'error': error})
-                return self.send_json(200, {**with_actions(snapshot), 'refreshing': refreshing, 'error': error})
+                try:
+                    return self.send_json(200, portfolio_service.get(params))
+                except (ValueError, TypeError) as exc:
+                    return self.send_json(400, {'error': str(exc)})
             if parsed.path == '/api/me':
                 identity = self.identity()
                 return self.send_json(200, {**identity, 'canManageUsage': usage.can_manage(self.usage_identity())})
@@ -550,26 +556,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(400, {'error': 'Presença inválida.'})
             except Exception:
                 return self.send_json(503, {'error': 'Registro de presença indisponível.'})
-        if urlparse(self.path).path == '/api/portfolio/actions':
-            try:
-                if self.headers.get('Content-Type', '').split(';')[0].strip().lower() != 'application/json':
-                    return self.send_json(415, {'error': 'Envie a ação como JSON.'})
-                size = int(self.headers.get('Content-Length', '0'))
-                if size <= 0 or size > 12000:
-                    return self.send_json(400, {'error': 'Tamanho de ação inválido.'})
-                payload = json.loads(self.rfile.read(size))
-                if not isinstance(payload, dict):
-                    raise ValueError('Informe os dados da ação.')
-                snapshot, _, _ = portfolio_service.get()
-                group = next((g for g in (snapshot or {}).get('groups', []) if g['id'] == str(payload.get('groupId'))), None)
-                if group is None:
-                    return self.send_json(404, {'error': 'Grupo não encontrado na análise atual.'})
-                return self.send_json(200, {'action': save_action(payload, group)})
-            except (ValueError, TypeError):
-                return self.send_json(400, {'error': 'Confira responsável, motivo, próxima ação e data (de hoje até um ano).'} )
-            except Exception as exc:
-                print(f'[portfolio] Save failed: {exc}')
-                return self.send_json(500, {'error': 'Não foi possível salvar a ação. Tente novamente.'})
         if urlparse(self.path).path != '/api/ask':
             return self.send_json(404, {'error': 'Rota não encontrada'})
         try:
@@ -676,5 +662,4 @@ if __name__ == '__main__':
         print(f'Pulso Comercial API em http://localhost:{args.port}')
         server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
         server.trust_iis_identity = args.trust_iis_identity
-        portfolio_service.start()
         server.serve_forever()

@@ -16,10 +16,10 @@ def main():
     args = parser.parse_args()
     marker = ROOT / 'outputs/release-build.json'
     if not marker.is_file():
-        raise SystemExit('Build de atualizacao sem carteira ausente. Execute prepare-release.ps1.')
+        raise SystemExit('Build de atualizacao ausente. Execute prepare-release.ps1.')
     release = json.loads(marker.read_text(encoding='utf-8'))
     stage = Path(release['stage']).resolve()
-    if stage.parent != (ROOT / 'outputs').resolve() or release.get('excludedFeatures') != ['carteira']:
+    if stage.parent != (ROOT / 'outputs').resolve() or release.get('excludedFeatures') != [] or release.get('includedFeatures') != ['carteira']:
         raise SystemExit('Origem de atualizacao invalida.')
     version_source = (stage / 'lib/app-version.ts').read_text(encoding='utf-8')
     match = re.search(r"export const APP_VERSION = '(V\.[0-9]{2}\.[0-9]{3})';", version_source)
@@ -28,15 +28,13 @@ def main():
     app_version = match.group(1)
     version = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     files = sorted(p for p in (stage / 'dist/standalone').rglob('*') if p.is_file())
-    files += [stage / name for name in ('backend/server.py', 'backend/queries.py', 'backend/usage.py', 'scripts/start-iis.mjs')]
+    files += [stage / name for name in ('backend/server.py', 'backend/queries.py', 'backend/usage.py', 'backend/portfolio.py', 'backend/portfolio_analysis.py', 'backend/group_dashboard.py', 'scripts/start-iis.mjs')]
     if not (stage / 'dist/standalone/server.js').is_file():
         raise SystemExit('Build standalone ausente. Execute prepare-release.ps1.')
-    for path in files:
-        if 'portfolio' in path.name or 'carteira' in path.parts:
-            raise SystemExit('Arquivo experimental encontrado no pacote.')
-        if path.suffix in ('.js', '.mjs', '.json', '.html', '.py', '.map') and any(token in path.read_bytes() for token in (b'/carteira', b'/api/portfolio', b'Carteira inteligente', b'from portfolio import')):
-            raise SystemExit(f'Referencia experimental no pacote: {path.name}')
-    manifest = {'application': 'PulsoComercial', 'schema': 1, 'version': version, 'appVersion': app_version, 'excludedFeatures': ['carteira'], 'files': []}
+    for name in ('backend/portfolio.py', 'backend/portfolio_analysis.py', 'backend/group_dashboard.py', 'app/carteira/page.tsx'):
+        if not (stage / name).is_file():
+            raise SystemExit(f'Carteira incompleta: {name}')
+    manifest = {'application': 'PulsoComercial', 'schema': 1, 'version': version, 'appVersion': app_version, 'excludedFeatures': [], 'includedFeatures': ['carteira'], 'files': []}
     output = ROOT / 'outputs' / f'Pulso-Release-{version}.zip'
     output.parent.mkdir(exist_ok=True)
     with ZipFile(output, 'x', ZIP_DEFLATED) as archive:

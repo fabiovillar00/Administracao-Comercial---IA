@@ -27,6 +27,8 @@ yarn-error.log*
 .pnpm-debug.log*
 /backend-local*.log
 /frontend-local*.log
+/backend-local*.err
+/frontend-local*.err
 
 # local environment
 .env*

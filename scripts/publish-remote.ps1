@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Server = 'DMBAPP03.DMB.LOCAL',
     [switch]$CheckAccessOnly,
@@ -15,6 +15,7 @@ $session = $null
 $lock = $null
 $transcribing = $false
 $applying = $false
+$applied = $false
 try {
     $lock = [IO.File]::Open((Join-Path $outputs 'publish.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
     Start-Transcript -Path $log | Out-Null
@@ -74,12 +75,28 @@ try {
         & (Join-Path $Folder 'Atualizar-Pulso.ps1') -Package (Join-Path $Folder 'release.zip') -Sha256 $Hash
     }
     $applying = $false
+    $applied = $true
+    Write-Host 'Conferindo a nova Carteira inteligente no servidor...'
+    Invoke-Command -Session $session -ScriptBlock {
+        $ErrorActionPreference = 'Stop'
+        $page = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:3000/carteira' -TimeoutSec 60
+        if ($page.StatusCode -ne 200 -or $page.Content -notmatch 'Clientes que deixaram de comprar') { throw 'Tela da Carteira nao confirmada.' }
+        $analysis = Invoke-RestMethod -Uri ('http://127.0.0.1:8000/api/portfolio?years=5&baseYear=' + (Get-Date).Year + '&category=implementos&mode=base') -TimeoutSec 180
+        if ($null -eq $analysis.groups -or $null -eq $analysis.period) { throw 'Consulta da Carteira nao confirmada.' }
+        Write-Host "Carteira verificada: $(@($analysis.groups).Count) grupos retornados."
+        $groupPage = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:3000/carteira/grupo' -TimeoutSec 60
+        if ($groupPage.StatusCode -ne 200 -or $groupPage.Content -notmatch 'Visão do grupo') { throw 'Tela da Visao do grupo nao confirmada.' }
+        $group = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/group-dashboard?personId=112&category=implementos' -TimeoutSec 180
+        if ($null -eq $group.cards -or $group.filters.category -ne 'implementos') { throw 'Consulta da Visao do grupo nao confirmada.' }
+        Write-Host "Visao do grupo verificada: $($group.scope.name), $(@($group.scope.members).Count) unidades."
+
+    }
     Write-Host "SUCESSO: versao $($release.version) publicada. Confira o site com Ctrl+F5."
 } catch {
     Write-Host "FALHA: $($_.Exception.Message)" -ForegroundColor Red
     if ($applying) {
         Write-Host 'A publicacao nao foi confirmada. Consulte o log em C:\Pulso\Atualizacoes no servidor antes de repetir. O atualizador tenta restaurar em falhas de instalacao; perda da conexao exige conferir o estado remoto.'
-    } else { Write-Host 'Publicacao interrompida antes da aplicacao. Nenhuma troca foi solicitada por este processo.' }
+    } elseif ($applied) { Write-Host 'Versao instalada, mas a verificacao posterior falhou. Confira os erros e o estado remoto antes de repetir.' } else { Write-Host 'Publicacao interrompida antes da aplicacao. Nenhuma troca foi solicitada por este processo.' }
     Write-Host "Log local: $log"
     exit 1
 } finally {
