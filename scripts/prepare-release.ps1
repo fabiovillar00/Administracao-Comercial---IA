@@ -8,6 +8,8 @@ try {
     if ($LASTEXITCODE) { throw 'Testes da API falharam.' }
     node --experimental-strip-types lib/revenue-evolution.test.mjs
     if ($LASTEXITCODE) { throw 'Testes do grafico falharam.' }
+    node --experimental-strip-types scripts/test-portfolio-excel.mjs
+    if ($LASTEXITCODE) { throw 'Testes de exportacao Excel falharam.' }
     node node_modules/typescript/bin/tsc --noEmit
     if ($LASTEXITCODE) { throw 'Verificacao TypeScript falhou.' }
     node scripts/build-iis.mjs

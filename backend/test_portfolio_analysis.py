@@ -57,6 +57,30 @@ class ReactivationTests(unittest.TestCase):
         self.assertEqual(params, [55, 77])
         self.assertEqual(result, {'items': []})
 
+    def test_last_order_includes_closed_orders_and_matches_category(self):
+        connect, rows = MagicMock(), MagicMock(return_value=[])
+        service = PortfolioAnalysis(connect, rows)
+        self.assertEqual(service.get({'action': ['lastOrder'], 'personId': ['77'], 'category': ['pecas']}), {'orders': []})
+        sql, *params = connect.return_value.__enter__.return_value.cursor.return_value.execute.call_args.args
+        self.assertIn('TOP (1)', sql)
+        self.assertIn('OV.STATUS <> 5', sql)
+        self.assertIn("FAM.FAMILIA LIKE '[2-8].%'", sql)
+        self.assertIn('ORDER BY OV.DATAINCLUSAO DESC, OV.HANDLE DESC', sql)
+        self.assertEqual(params, [77])
+
+    def test_order_products_are_bound_to_order_and_unit(self):
+        connect, rows = MagicMock(), MagicMock(return_value=[])
+        service = PortfolioAnalysis(connect, rows)
+        self.assertEqual(service.get({'action': ['orderProducts'], 'orderId': ['55'], 'personId': ['77'], 'category': ['implementos']}), {'items': []})
+        sql, *params = connect.return_value.__enter__.return_value.cursor.return_value.execute.call_args.args
+        self.assertIn('OV.HANDLE = ? AND OV.PESSOA = ?', sql)
+        self.assertIn('OV.STATUS <> 5', sql)
+        self.assertIn("FAM.FAMILIA LIKE '1.%'", sql)
+        self.assertEqual(params, [55, 77])
+        for invalid in ({'personId': ['0']}, {'personId': ['77'], 'orderId': ['0']}):
+            with self.assertRaises(ValueError):
+                service.get({'action': ['orderProducts'], **invalid})
+
     def test_summary_preserves_invoice_boundaries_and_category(self):
         connect, rows = MagicMock(), MagicMock(side_effect=[[], [], [], []])
         service = PortfolioAnalysis(connect, rows)

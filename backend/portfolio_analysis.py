@@ -67,7 +67,7 @@ class PortfolioAnalysis:
     def get(self, params):
         opt = options(params)
         action = params.get('action', ['summary'])[0]
-        if action not in ('summary', 'proposals', 'products'):
+        if action not in ('summary', 'proposals', 'products', 'lastOrder', 'orderProducts'):
             raise ValueError('Detalhamento inválido.')
         filt = category_filter(opt['category'])
         # Same proposal eligibility as the revenue dashboard, with parameterized IDs.
@@ -80,6 +80,29 @@ WHERE A.HANDLE IN (SELECT A.HANDLE """ + eligible + ') AND ' + filt
         with self.connect() as conn:
             conn.timeout = 120
             cur = conn.cursor()
+            if action in ('lastOrder', 'orderProducts'):
+                person_id = int(params.get('personId', ['0'])[0])
+                if person_id <= 0:
+                    raise ValueError('Informe a unidade.')
+                order_scope = OPEN_ORDERS[OPEN_ORDERS.index('FROM CM_ORDENSVENDA'):].format(ids='SELECT HANDLE FROM GN_PESSOAS').replace('OV.STATUS NOT IN (6, 5, 4)', 'OV.STATUS <> 5')
+                order_items = '''FROM CM_ORDENSVENDA OV
+JOIN CM_ORDEMVENDAITENS I ON I.ORDEMVENDA = OV.HANDLE
+JOIN PD_PRODUTOS P ON P.HANDLE = I.PRODUTO
+LEFT JOIN PD_FAMILIASPRODUTOS FAM ON FAM.HANDLE = P.FAMILIA
+WHERE OV.HANDLE IN (SELECT OV.HANDLE ''' + order_scope + ') AND ' + filt
+                if action == 'orderProducts':
+                    order_id = int(params.get('orderId', ['0'])[0])
+                    if order_id <= 0:
+                        raise ValueError('Informe o pedido.')
+                    sql = '''SELECT I.HANDLE AS id, P.CODIGOREFERENCIA AS codigo,
+P.NOME AS nome, FAM.NOME AS familia, I.QUANTIDADE AS quantidade,
+COALESCE(I.VALORLIQUIDO, 0) AS valor ''' + order_items + ' AND OV.HANDLE = ? AND OV.PESSOA = ? ORDER BY I.HANDLE'
+                    return dict(items=self.read_rows(cur.execute(sql, order_id, person_id)))
+                sql = '''SELECT TOP (1) OV.HANDLE AS id, OV.NUMEROOV AS numero, OV.DATAINCLUSAO AS data,
+COUNT(*) AS itemCount, SUM(COALESCE(I.VALORLIQUIDO, 0)) AS valor ''' + order_items + '''
+AND OV.PESSOA = ? GROUP BY OV.HANDLE, OV.NUMEROOV, OV.DATAINCLUSAO
+ORDER BY OV.DATAINCLUSAO DESC, OV.HANDLE DESC'''
+                return dict(orders=self.read_rows(cur.execute(sql, person_id)))
             if action == 'products':
                 proposal_id = int(params.get('proposalId', ['0'])[0])
                 person_id = int(params.get('personId', ['0'])[0])

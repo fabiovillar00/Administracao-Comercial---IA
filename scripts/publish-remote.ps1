@@ -25,6 +25,9 @@ try {
     Write-Host 'Conectando com autenticacao do dominio; nenhuma senha sera gravada.'
     $connection = @{ComputerName = $Server; Authentication = 'Kerberos'; ErrorAction = 'Stop'}
     if (-not $UseCurrentCredential) {
+        # Use the module shipped with this PowerShell host, even when a parent
+        # PowerShell 7 process contributes a different module search path.
+        Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop
         $credential = Get-Credential -Message "Conta autorizada a atualizar o Pulso em $Server (DOMINIO\usuario)"
         if (-not $credential) { throw 'Autenticacao cancelada.' }
         $connection.Credential = $credential

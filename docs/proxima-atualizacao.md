@@ -1,5 +1,15 @@
 # Próxima atualização de produção
 
+## Preparada — V.01.010 (08/10/2026)
+
+Publicação autorizada pelo usuário após teste local. Incluídos Classificar por e Ordem na Carteira: grupo, quantidade/valor das propostas, último pedido, último faturamento e atenção exclusiva. Classificação aplicada antes da paginação, preservada na impressão e no Excel; datas ausentes ficam no final. Publicação pendente de execução e autenticação no publicador.
+
+## Publicado — V.01.009 (08/10/2026)
+
+Publicação autorizada pelo usuário após validação local. Datas do último pedido clicáveis no grupo e na filial, com painel do pedido e produtos respeitando a categoria. Exportar Excel ao lado da impressão: arquivo .xlsx com Grupos, Unidades e Critérios, incluindo todas as páginas da busca e todas as filiais. Datas e valores tipados; códigos e documentos preservados como texto. Teste de geração/leitura do Excel incluído na preparação da versão.
+
+Publicada às 09:06:56 (Brasília), pacote `20261008T120339260252Z`, SHA256 `0b29522b85c69e4f62c02faf8def448e8f4bf4d5e0a58546f520d0cd860f94a1`. Backup `C:\Pulso\Atualizacoes\20261008-090521-970472ae\backup`; log `outputs/publicacao-20261008-090231-41a16705.log`. Aprovados 55 testes da API, 4 do gráfico, teste Excel, TypeScript e build IIS. Verificações remotas concluídas: Carteira com 509 grupos e Visão do grupo BP com 12 unidades. Sucesso confirmado pelo log e captura do usuário. Tentativas anteriores pararam antes da aplicação; corrigido o carregamento explícito do módulo de credenciais do Windows PowerShell. Este registro substitui o estado anterior de publicação pendente.
+
 ## Publicado — V.01.008 (07/10/2026)
 
 Corrigida a navegação das abas da Carteira: links HTML diretos substituem o Link do roteador para abrir a Visão do grupo. Publicado às 07:10:12, pacote `20261007T100655758136Z`, backup `C:\Pulso\Atualizacoes\20261007-070839-4aee24a0\backup`. Testes da API (53), gráfico (4), TypeScript e compilação aprovados. Conferência no servidor: Carteira 509 grupos; Visão do grupo BP 12 unidades. Navegador automatizado sem autenticação Windows disponível; abertura direta e consulta confirmadas pelo processo remoto.
