@@ -9,6 +9,18 @@ def person(pid, alias='', business=None):
 
 
 class ReactivationTests(unittest.TestCase):
+    def test_locations_include_all_branches_without_duplicates(self):
+        clients = [dict(person(1, 'Grupo'), uf='SP', municipio='Matão'),
+                   dict(person(2, 'Grupo'), uf='SP', municipio='Matão'),
+                   dict(person(3, 'Grupo'), uf='MG', municipio='Uberaba'),
+                   person(4, 'Grupo')]
+        group = consolidate(clients, [dict(person=1, historicalCount=1)], [], [])[0]
+        self.assertEqual(group['uf'], 'MG / SP')
+        self.assertEqual(group['municipio'], 'Matão / Uberaba')
+        units = {u['id']: u for u in group['members']}
+        self.assertEqual((units[1]['uf'], units[1]['municipio']), ('SP', 'Matão'))
+        self.assertEqual((units[4]['uf'], units[4]['municipio']), ('', ''))
+
     def test_period_boundaries_and_past_year(self):
         current = options({'years': ['10'], 'baseYear': ['2026']}, date(2026, 10, 6))
         self.assertEqual((current['start'], current['cutoff'], current['end']), (date(2016, 1, 1), date(2026, 1, 1), date(2026, 10, 7)))

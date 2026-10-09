@@ -44,6 +44,7 @@ def consolidate(clients, sales, proposals, orders):
             pid = int(p['id'])
             sale, proposal, order = sales.get(pid, {}), proposals.get(pid, {}), orders.get(pid, {})
             branches.append(dict(id=pid, codigo=p.get('codigo'), nome=p.get('nome'), documento=p.get('documento'),
+                uf=str(p.get('uf') or '').strip(), municipio=str(p.get('municipio') or '').strip(),
                 historicalRevenue=float(sale.get('historicalRevenue') or 0), lastSale=sale.get('lastSale'),
                 proposalCount=int(proposal.get('proposalCount') or 0), proposalValue=float(proposal.get('proposalValue') or 0),
                 lastOrder=order.get('lastOrder'), hasBaseYearOrder=bool(order.get('hasBaseYearOrder'))))
@@ -51,6 +52,8 @@ def consolidate(clients, sales, proposals, orders):
         aliases = sorted({str(p['groupName']).strip() for p in members if str(p.get('groupName') or '').strip()})
         name = aliases[0] if aliases else min(members, key=lambda p: int(p['id']))['nome']
         result.append(dict(id=str(gid), name=name, members=branches,
+            uf=' / '.join(sorted({b['uf'] for b in branches if b['uf']})),
+            municipio=' / '.join(sorted({b['municipio'] for b in branches if b['municipio']})),
             historicalRevenue=round(sum(b['historicalRevenue'] for b in branches), 2),
             lastSale=max((b['lastSale'] for b in branches if b['lastSale']), default=None),
             proposalCount=sum(b['proposalCount'] for b in branches),

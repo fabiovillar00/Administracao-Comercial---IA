@@ -141,3 +141,13 @@ Ajuste de 06/10/2026: a Visão do grupo reutiliza `portfolio.group_clients`, exa
 Visão do grupo: filtro Geral/Peças/Implementos aplicado aos indicadores, atividade, produtos e descontos. Categorias reutilizam as famílias existentes; pedidos e propostas filtrados somam somente o líquido dos itens correspondentes. Validado TypeScript, 52 testes e consultas reais BP para ambas as categorias.
 Carteira: lâmpada amarela de Atenção exclusiva no final da linha quando qualquer unidade possui pedido não cancelado no ano-base selecionado, respeitando a categoria. Flag calculada independentemente da data do último pedido; incluída na impressão/PDF. Validado com 53 testes e TypeScript. Ainda local.
 Visão do grupo: incluído Imprimir / Salvar PDF com relatório A4 paisagem independente da tela, filtros da consulta, indicadores atuais, atividade, comportamento, série mensal tabulada, todos os produtos e ambas as listas de acompanhamento. Não limita à página nem à busca textual da tabela. Logo DMB, usuário e data/hora de Brasília. Indicadores removidos pelo usuário não reaparecem no relatório.
+
+## V.01.011 — UF e município na carteira (09/10/2026)
+
+- Colunas UF e Município após o nome do grupo e de cada unidade/filial.
+- Localidades consolidadas sem repetições nos grupos; busca inclui UF e município.
+- Consulta de leitura usa o estado e o município do cadastro de pessoas.
+- Servidor local ignora pastas de pacotes na monitoração de arquivos, evitando a queda por arquivos bloqueados.
+- Validação: 56 testes da API, 4 testes do gráfico, exportação Excel, TypeScript e build IIS aprovados.
+- Publicada em 09/10/2026 às 10:34:07, pacote `20261009T133109907500Z`; backup `C:\Pulso\Atualizacoes\20261009-103241-9a2a3019\backup`.
+- A validação funcional inicial encontrou falta de SELECT em `dbo.MUNICIPIOS`. Concedida somente essa leitura a `DMB\svc_pulso`, com consulta sob a identidade do usuário validada. Script reproduzível: `deploy/iis/Permissao-Municipios.sql`.
