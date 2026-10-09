@@ -14,7 +14,7 @@ type Report = { generatedAt: string; filters: Filters; groups: Group[]; period: 
 type Proposal = { id: number; numero: string; data: string; itemCount: number; valor: number };
 type PanelTarget = { group: Group; unit?: Unit; order?: boolean };
 type DetailCache = Map<string, Promise<unknown>>;
-type SortColumn = 'name' | 'proposalCount' | 'proposalValue' | 'lastOrder' | 'lastSale' | 'hasBaseYearOrder';
+type SortColumn = 'name' | 'uf' | 'municipio' | 'proposalCount' | 'proposalValue' | 'lastOrder' | 'lastSale' | 'hasBaseYearOrder';
 type ListedProposal = Proposal & { unit: Unit };
 type Product = { id: number; codigo: string; nome: string; familia: string; quantidade: number; valor: number };
 const money = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -102,6 +102,16 @@ export default function PortfolioPage() {
     } catch (e) { setExportError(e instanceof Error ? e.message : 'Não foi possível exportar o Excel. Tente novamente.'); }
     finally { setExporting(false); }
   }
+  const allExpanded = groups.length > 0 && groups.every(g => expanded.has(g.id));
+  function toggleAll() {
+    setExpanded(current => {
+      const next = new Set(current);
+      for (const group of groups) {
+        if (allExpanded) next.delete(group.id); else next.add(group.id);
+      }
+      return next;
+    });
+  }
   const toggle = (id: string) => setExpanded(current => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   return <main className="min-h-screen bg-[#f5f6fb] text-[#24233d]">
     <header className="border-b border-[#ddddeb] bg-white px-6 py-4"><div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-4"><a href="/" className="flex items-center gap-2 text-sm text-[#62637b]"><ArrowLeft className="size-4" />Voltar ao faturamento</a><div className="border-l pl-4"><p className="text-xs uppercase tracking-widest text-[#71728a]">Carteira inteligente</p><h1 className="text-lg font-semibold">Clientes que deixaram de comprar</h1></div></div></header>
@@ -123,7 +133,7 @@ export default function PortfolioPage() {
       {loading && <div role="status" className="rounded-2xl border bg-white p-10 text-center"><RefreshCw className="mx-auto mb-3 size-7 animate-spin text-[#008ad0]" />Consolidando o histórico de faturamento dos grupos…<p className="mt-2 text-sm text-[#71728a]">A consulta de vários anos pode levar alguns instantes.</p></div>}
       {!data && !loading && !error && <div className="rounded-2xl border border-dashed border-[#cfd3e4] p-10 text-center text-[#62637b]"><Users className="mx-auto mb-3 size-8 text-[#008ad0]" />Defina o período e clique em Analisar clientes.</div>}
       {data && <>
-        <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-[#71728a]">Excel: todos os grupos da busca e suas filiais. Impressão: grupos e filiais expandidas. Inclui todas as páginas.</p><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={exporting || loading || !groups.length} onClick={() => void exportExcel()} title="Exportar todos os grupos da busca e suas filiais para Excel"><FileSpreadsheet className="size-4" />{exporting ? 'Exportando…' : 'Exportar Excel'}</Button><Button variant="outline" disabled={printingReport || loading} onClick={() => void printReport()} title="Escolha uma impressora ou Salvar como PDF"><Printer className="size-4" />{printingReport ? 'Preparando impressão…' : 'Imprimir / Salvar PDF'}</Button></div></div>
+        <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-[#71728a]">Excel: todos os grupos da busca e suas filiais, mesmo recolhidos. Impressão: grupos e filiais expandidas. Inclui todas as páginas.</p><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={exporting || loading || !groups.length} onClick={() => void exportExcel()} title="Exportar todos os grupos da busca e suas filiais para Excel"><FileSpreadsheet className="size-4" />{exporting ? 'Exportando…' : 'Exportar Excel'}</Button><Button variant="outline" disabled={printingReport || loading} onClick={() => void printReport()} title="Escolha uma impressora ou Salvar como PDF"><Printer className="size-4" />{printingReport ? 'Preparando impressão…' : 'Imprimir / Salvar PDF'}</Button></div></div>
         {exportError && <p role="alert" className="text-sm text-red-800">{exportError}</p>}
         {reportPrintError && <p role="alert" className="text-sm text-red-800">{reportPrintError}</p>}
         <div className="rounded-xl bg-[#e9f5fc] px-5 py-4 text-sm text-[#24607e]"><strong>{({ all: 'Geral', pecas: 'Peças', implementos: 'Implementos' } as Record<string, string>)[data.filters.category]}</strong> · Comprou de {day(data.period.historyStart)} a {day(data.period.historyEnd)} · Sem faturamento de {day(data.period.inactiveStart)} a {day(data.period.inactiveEnd)}<p className="mt-1 text-xs">Consulta concluída em {new Date(data.generatedAt).toLocaleString('pt-BR')}</p></div>
@@ -132,9 +142,10 @@ export default function PortfolioPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 border-b p-5">
             <div><h3 className="font-semibold">Grupos que deixaram de comprar</h3><p className="mt-1 text-xs text-[#71728a]">{number(groups.length)} grupos · expanda para ver as unidades/filiais</p></div>
             <div className="flex flex-wrap items-end gap-3">
-              <label className="text-xs text-[#62637b]">Classificar por<select value={sortColumn} onChange={e => { const column = e.target.value as SortColumn; setSortColumn(column); setSortDirection(column === 'name' ? 'asc' : 'desc'); setPage(0); }} className={inputClass}><option value="name">Grupo</option><option value="proposalCount">Propostas qtd.</option><option value="proposalValue">R$ propostas</option><option value="lastOrder">Último pedido</option><option value="lastSale">Último faturamento</option><option value="hasBaseYearOrder">Atenção exclusiva</option></select></label>
-              <label className="text-xs text-[#62637b]">Ordem<select value={sortDirection} onChange={e => { setSortDirection(e.target.value as 'asc' | 'desc'); setPage(0); }} className={inputClass}><option value="asc">{sortColumn === 'name' ? 'A → Z' : sortColumn === 'lastOrder' || sortColumn === 'lastSale' ? 'Mais antigos primeiro' : 'Crescente'}</option><option value="desc">{sortColumn === 'name' ? 'Z → A' : sortColumn === 'lastOrder' || sortColumn === 'lastSale' ? 'Mais recentes primeiro' : 'Decrescente'}</option></select></label>
-              <label className="flex items-center gap-2 rounded-lg border px-3"><Search className="size-4 text-[#71728a]" /><input aria-label="Buscar grupo, unidade, código ou CNPJ" placeholder="Grupo, unidade, código ou CNPJ" value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} className="w-64 max-w-full py-2 text-sm outline-none" /></label>
+              <Button variant="outline" disabled={!groups.length} onClick={toggleAll} title="Aplica a todos os grupos da busca, incluindo outras páginas">{allExpanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}{allExpanded ? 'Recolher todos' : 'Expandir todos'}</Button>
+              <label className="text-xs text-[#62637b]">Classificar por<select value={sortColumn} onChange={e => { const column = e.target.value as SortColumn; setSortColumn(column); setSortDirection(['name', 'uf', 'municipio'].includes(column) ? 'asc' : 'desc'); setPage(0); }} className={inputClass}><option value="name">Grupo</option><option value="uf">UF</option><option value="municipio">Município</option><option value="proposalCount">Propostas qtd.</option><option value="proposalValue">R$ propostas</option><option value="lastOrder">Último pedido</option><option value="lastSale">Último faturamento</option><option value="hasBaseYearOrder">Atenção exclusiva</option></select></label>
+              <label className="text-xs text-[#62637b]">Ordem<select value={sortDirection} onChange={e => { setSortDirection(e.target.value as 'asc' | 'desc'); setPage(0); }} className={inputClass}><option value="asc">{['name', 'uf', 'municipio'].includes(sortColumn) ? 'A → Z' : sortColumn === 'lastOrder' || sortColumn === 'lastSale' ? 'Mais antigos primeiro' : 'Crescente'}</option><option value="desc">{['name', 'uf', 'municipio'].includes(sortColumn) ? 'Z → A' : sortColumn === 'lastOrder' || sortColumn === 'lastSale' ? 'Mais recentes primeiro' : 'Decrescente'}</option></select></label>
+              <label className="flex items-center gap-2 rounded-lg border px-3"><Search className="size-4 text-[#71728a]" /><input aria-label="Buscar grupo, unidade, código, CNPJ, UF ou município" placeholder="Grupo, unidade, UF ou município" value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} className="w-64 max-w-full py-2 text-sm outline-none" /></label>
             </div>
           </div>
           <div className="overflow-x-auto"><table className="w-full"><thead className="bg-[#f7f9fc]"><tr><th className={th}>Grupo</th><th className={th}>UF</th><th className={th}>Município</th><th className={`${th} text-right`}>Propostas qtd.</th><th className={`${th} text-right`}>R$ propostas</th><th className={th}>Último pedido</th><th className={th}>Último faturamento</th><th className={th}><span className="sr-only">Atenção exclusiva</span></th></tr></thead><tbody>

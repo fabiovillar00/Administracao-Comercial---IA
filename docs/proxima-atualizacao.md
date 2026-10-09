@@ -142,6 +142,15 @@ Visão do grupo: filtro Geral/Peças/Implementos aplicado aos indicadores, ativi
 Carteira: lâmpada amarela de Atenção exclusiva no final da linha quando qualquer unidade possui pedido não cancelado no ano-base selecionado, respeitando a categoria. Flag calculada independentemente da data do último pedido; incluída na impressão/PDF. Validado com 53 testes e TypeScript. Ainda local.
 Visão do grupo: incluído Imprimir / Salvar PDF com relatório A4 paisagem independente da tela, filtros da consulta, indicadores atuais, atividade, comportamento, série mensal tabulada, todos os produtos e ambas as listas de acompanhamento. Não limita à página nem à busca textual da tabela. Logo DMB, usuário e data/hora de Brasília. Indicadores removidos pelo usuário não reaparecem no relatório.
 
+## V.01.012 — Expansão dos grupos e localização no Excel (09/10/2026)
+
+- Expandir todos / Recolher todos aplica-se a todos os grupos da busca, incluindo outras páginas.
+- Classificação por UF e Município em ordem alfabética crescente ou decrescente.
+- Excel inclui UF e Município nas abas Grupos e Unidades, preservando a exportação de todas as filiais mesmo recolhidas.
+- Teste de exportação atualizado para conferir as novas colunas e preservar datas, valores e identificadores.
+- Publicada em 09/10/2026 às 11:06:53, pacote `20261009T140359652042Z`; backup `C:\Pulso\Atualizacoes\20261009-110528-443cfd66\backup`.
+- Validação aprovada: 56 testes da API, 4 testes do gráfico, exportação Excel, TypeScript e build IIS. Após a instalação, telas verificadas e consultas confirmadas no servidor: carteira com 508 grupos; Visão do grupo BP com 12 unidades.
+
 ## V.01.011 — UF e município na carteira (09/10/2026)
 
 - Colunas UF e Município após o nome do grupo e de cada unidade/filial.
